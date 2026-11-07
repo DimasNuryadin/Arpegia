@@ -1,0 +1,14 @@
+# Audio Processing & Signal Analysis
+librosa>=0.10.2
+soundfile>=0.12.1
+numpy>=1.26.0
+scipy>=1.13.0
+
+# AI Orchestration & Music Intelligence
+langgraph>=0.2.0
+langchain-core>=0.3.0
+pydantic>=2.8.0
+
+# Background Tasks & Utilities
+celery>=5.4.0
+redis>=5.0.0

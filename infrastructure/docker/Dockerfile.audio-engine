@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system audio and build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python dependencies
+COPY services/audio-engine/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy service source code
+COPY services/audio-engine /app
+
+CMD ["python", "-c", "print('Arpegia Audio Engine Service ready.')"]
