@@ -80,17 +80,22 @@ class PipelineState(TypedDict, total=False):
 def audio_loader_node(state: PipelineState) -> Dict[str, Any]:
     """Node 1: AudioLoaderNode - Loads audio file, extracts duration and basic stats."""
     file_path = state["file_path"]
-    filename = os.path.basename(file_path)
+    filename = state.get("filename") or os.path.basename(file_path)
 
     processor = AudioProcessor()
     y, sr = processor.load_audio(file_path)
+    if y is None or len(y) == 0:
+        raise ValueError(f"Audio file '{filename}' contains no decodable audio samples.")
+
     duration = processor.get_duration(y, sr)
+    if duration <= 0:
+        raise ValueError(f"Audio file '{filename}' has zero duration.")
 
     return {
         "filename": filename,
         "y": y,
         "sr": sr,
-        "duration": round(duration, 1),
+        "duration": round(duration, 2),
     }
 
 
@@ -109,8 +114,8 @@ def key_and_tempo_node(state: PipelineState) -> Dict[str, Any]:
     key_detector = KeyDetector()
     key_result = key_detector.detect_key_from_chroma(chroma)
 
-    # Format BPM cleanly (integer if whole, else 1 decimal)
-    formatted_bpm = int(round(bpm)) if abs(bpm - round(bpm)) < 1e-3 else round(bpm, 1)
+    # Format BPM cleanly as integer for consistent UI and API schema contract
+    formatted_bpm = max(1, int(round(bpm)))
 
     return {
         "bpm": formatted_bpm,
@@ -204,12 +209,14 @@ def create_orchestrator():
 def run_pipeline(
     file_path: str,
     styles: Optional[List[str]] = None,
+    filename: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute the full audio analysis pipeline on a target audio file.
 
     Args:
         file_path: Path to MP3/WAV audio file.
         styles: Optional list of styles (e.g. ['Neo Soul', 'Jazz', 'Pop', 'Fingerstyle']).
+        filename: Optional original filename to preserve in output metadata.
 
     Returns:
         Clean, serialized dictionary matching the exact MVP output specification.
@@ -219,5 +226,7 @@ def run_pipeline(
         "file_path": file_path,
         "styles": styles if styles is not None else ["Neo Soul"],
     }
+    if filename:
+        initial_state["filename"] = filename
     final_state = app.invoke(initial_state)
     return final_state["output"]

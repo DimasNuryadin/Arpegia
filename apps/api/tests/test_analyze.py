@@ -3,6 +3,7 @@
 import io
 import wave
 import pytest
+import numpy as np
 from httpx import AsyncClient
 
 
@@ -16,6 +17,25 @@ def create_mock_wav_bytes(duration_seconds: float = 1.0, sample_rate: int = 8000
         num_frames = int(duration_seconds * sample_rate)
         # Write silence frames (zeros)
         wav_file.writeframes(b"\x00\x00" * num_frames)
+    return buf.getvalue()
+
+
+def create_synthetic_chord_wav_bytes(
+    frequencies: list[float] = [261.63, 329.63, 392.00],  # C Major triad: C4, E4, G4
+    duration_seconds: float = 3.0,
+    sample_rate: int = 22050,
+) -> bytes:
+    """Generate a synthetic 16-bit PCM WAV file containing a musical chord."""
+    t = np.linspace(0, duration_seconds, int(sample_rate * duration_seconds), endpoint=False)
+    waveform = sum(np.sin(2 * np.pi * freq * t) for freq in frequencies) / len(frequencies)
+    pcm16 = np.int16(np.clip(waveform * 0.85, -1.0, 1.0) * 32767)
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm16.tobytes())
     return buf.getvalue()
 
 
@@ -144,3 +164,52 @@ async def test_reject_oversized_file(client: AsyncClient, monkeypatch: pytest.Mo
     assert response.status_code == 413
     data = response.json()
     assert "exceeds" in data["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_e2e_synthetic_wav_chord_and_key_detection(client: AsyncClient) -> None:
+    """End-to-end verification: generate a synthetic C Major WAV file, send to /api/v1/analyze,
+    and verify 200 OK with real LangGraph audio-engine chord and key detection output.
+    """
+    wav_bytes = create_synthetic_chord_wav_bytes(
+        frequencies=[261.63, 329.63, 392.00],  # C4, E4, G4 (C Major triad)
+        duration_seconds=3.0,
+        sample_rate=22050,
+    )
+    files = {"file": ("synthetic_c_major.wav", wav_bytes, "audio/wav")}
+
+    response = await client.post(
+        "/api/v1/analyze",
+        files=files,
+        headers={"Origin": "http://localhost:3000"},
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+    data = response.json()
+    assert data["status"] == "completed"
+    assert isinstance(data["job_id"], str) and len(data["job_id"]) > 0
+
+    # Verify real DSP & LangGraph metadata extraction
+    meta = data["metadata"]
+    assert meta["filename"] == "synthetic_c_major.wav"
+    assert pytest.approx(meta["duration"], abs=0.1) == 3.0
+    assert meta["key"] == "C Major"
+    assert isinstance(meta["bpm"], (int, float)) and meta["bpm"] > 0
+    assert meta["time_signature"] == "4/4"
+
+    # Verify real chord detection from audio-engine
+    chords = data["chords"]
+    assert isinstance(chords, list) and len(chords) >= 1
+    assert chords[0]["chord"] == "C"
+    assert chords[0]["start_time"] == 0.0
+    assert pytest.approx(chords[-1]["end_time"], abs=0.1) == 3.0
+    assert chords[0]["confidence"] >= 0.75
+
+    # Verify style-based improvisations generated for C
+    improvisations = data["improvisations"]
+    assert isinstance(improvisations, list) and len(improvisations) >= 1
+    assert improvisations[0]["original_chord"] == "C"
+    assert improvisations[0]["style"] == "Neo Soul"
+    assert "Cmaj7" in improvisations[0]["suggestions"]
+

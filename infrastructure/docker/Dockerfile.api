@@ -2,18 +2,25 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system audio and build dependencies (ffmpeg and libsndfile1 for librosa)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies
-COPY apps/api/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install python dependencies for both API and Audio Engine
+COPY services/audio-engine/requirements.txt ./audio-engine-requirements.txt
+COPY apps/api/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r audio-engine-requirements.txt -r requirements.txt
 
-# Copy application source
+# Copy audio-engine and application source
+COPY services/audio-engine /services/audio-engine
 COPY apps/api /app
+
+ENV PYTHONPATH="/app:/services/audio-engine"
+ENV AUDIO_ENGINE_PATH="/services/audio-engine"
 
 EXPOSE 8000
 

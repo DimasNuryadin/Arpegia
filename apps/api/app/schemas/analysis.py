@@ -1,6 +1,6 @@
 """Pydantic v2 schemas defining the Arpegia chord analysis contract."""
 
-from typing import List
+from typing import List, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -11,7 +11,7 @@ class AnalysisMetadata(BaseModel):
     filename: str = Field(..., description="Original audio file name")
     duration: float = Field(..., ge=0.0, description="Duration in seconds")
     key: str = Field(..., description="Detected musical key (e.g. 'G Major')")
-    bpm: int = Field(..., ge=1, description="Detected tempo in beats per minute")
+    bpm: Union[int, float] = Field(..., ge=1, description="Detected tempo in beats per minute")
     time_signature: str = Field(..., description="Musical time signature (e.g. '4/4')")
 
 

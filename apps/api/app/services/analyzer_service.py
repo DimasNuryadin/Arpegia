@@ -4,12 +4,12 @@ import os
 import sys
 import uuid
 import wave
-import shutil
 import tempfile
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import anyio
 from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import settings
@@ -21,6 +21,38 @@ from app.schemas.analysis import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_audio_engine_path() -> Optional[Path]:
+    """Ensure the `services/audio-engine` directory is on sys.path for direct import."""
+    current_file = Path(__file__).resolve()
+    candidates: List[Path] = []
+
+    env_path = os.environ.get("AUDIO_ENGINE_PATH")
+    if env_path:
+        candidates.append(Path(env_path).resolve())
+
+    # Monorepo layout: apps/api/app/services/analyzer_service.py -> parents[4]/services/audio-engine
+    if len(current_file.parents) >= 5:
+        candidates.append(current_file.parents[4] / "services" / "audio-engine")
+
+    # Container layout fallbacks
+    if len(current_file.parents) >= 3:
+        candidates.append(current_file.parents[2] / "services" / "audio-engine")
+    candidates.append(Path("/services/audio-engine"))
+
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "engine" / "orchestrator.py").is_file():
+            candidate_str = str(candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            return candidate
+
+    return None
+
+
+# Wire audio-engine path at module load
+_ensure_audio_engine_path()
 
 
 class AnalyzerService:
@@ -121,28 +153,62 @@ class AnalyzerService:
         # Standard fallback duration for Phase 1 MVP
         return 180.5
 
-    def _try_audio_engine(self, file_path: Path) -> Optional[List[ChordItem]]:
-        """Attempt to dispatch to the internal audio-engine module if wired."""
+    def _run_audio_engine(
+        self, file_path: Path, original_filename: str
+    ) -> Optional[Tuple[AnalysisMetadata, List[ChordItem], List[ImprovisationItem]]]:
+        """Invoke the `services/audio-engine` LangGraph orchestrator pipeline."""
         try:
-            # Check if chord detection module is available in python path
-            from chord_detection.detector import ChordDetector  # type: ignore
+            _ensure_audio_engine_path()
+            from engine.orchestrator import run_pipeline  # type: ignore
 
-            detector = ChordDetector()
-            raw_results = detector.detect_chords(str(file_path))
-            if raw_results:
-                return [
-                    ChordItem(
-                        chord=r.chord_name,
-                        start_time=r.start_time,
-                        end_time=r.end_time,
-                        confidence=r.confidence,
-                    )
-                    for r in raw_results
-                ]
+            pipeline_output = run_pipeline(
+                file_path=str(file_path),
+                styles=["Neo Soul", "Jazz", "Pop", "Fingerstyle"],
+                filename=original_filename,
+            )
+
+            if not pipeline_output or not pipeline_output.get("chords"):
+                return None
+
+            raw_meta = pipeline_output.get("metadata", {})
+            duration = float(raw_meta.get("duration", 0.0))
+            if duration <= 0:
+                return None
+
+            metadata = AnalysisMetadata(
+                filename=original_filename,
+                duration=duration,
+                key=str(raw_meta.get("key", "C Major")),
+                bpm=int(round(float(raw_meta.get("bpm", 120)))),
+                time_signature=str(raw_meta.get("time_signature", "4/4")),
+            )
+
+            chords = [
+                ChordItem(
+                    chord=str(c["chord"]),
+                    start_time=float(c["start_time"]),
+                    end_time=float(c["end_time"]),
+                    confidence=float(c["confidence"]),
+                )
+                for c in pipeline_output.get("chords", [])
+            ]
+
+            improvisations = [
+                ImprovisationItem(
+                    original_chord=str(imp["original_chord"]),
+                    style=str(imp["style"]),
+                    suggestions=list(imp.get("suggestions", [])),
+                )
+                for imp in pipeline_output.get("improvisations", [])
+            ]
+
+            return metadata, chords, improvisations
         except (ImportError, Exception) as exc:
-            logger.info("Audio engine not wired or returned empty (%s). Using fallback analysis.", exc)
-
-        return None
+            logger.info(
+                "Audio engine pipeline unavailable or could not decode file (%s). Using fallback analysis.",
+                exc,
+            )
+            return None
 
     def generate_fallback_analysis(
         self,
@@ -201,26 +267,13 @@ class AnalyzerService:
         try:
             duration = self.extract_audio_duration(temp_path, original_filename)
 
-            # Try invoking audio-engine or fallback
-            engine_chords = self._try_audio_engine(temp_path)
+            # Execute LangGraph audio-engine orchestrator in a worker thread
+            engine_result = await anyio.to_thread.run_sync(
+                self._run_audio_engine, temp_path, original_filename
+            )
 
-            if engine_chords:
-                metadata = AnalysisMetadata(
-                    filename=original_filename,
-                    duration=duration,
-                    key="G Major",
-                    bpm=105,
-                    time_signature="4/4",
-                )
-                improvisations = [
-                    ImprovisationItem(
-                        original_chord=c.chord,
-                        style="Neo Soul",
-                        suggestions=[f"{c.chord}maj7", f"{c.chord}9"],
-                    )
-                    for c in engine_chords[:4]
-                ]
-                chords = engine_chords
+            if engine_result is not None:
+                metadata, chords, improvisations = engine_result
             else:
                 metadata, chords, improvisations = self.generate_fallback_analysis(
                     original_filename, duration

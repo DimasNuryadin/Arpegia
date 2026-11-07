@@ -12,8 +12,15 @@ export class ArpegiaApiClient {
   private apiUrl: string;
 
   constructor() {
-    this.apiUrl =
-      process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
+    const rawUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+    if (rawUrl) {
+      const normalized = rawUrl.replace(/\/+$/, "");
+      this.apiUrl = normalized.endsWith("/api/v1/analyze")
+        ? normalized
+        : `${normalized}/api/v1/analyze`;
+    } else {
+      this.apiUrl = DEFAULT_API_URL;
+    }
   }
 
   getApiUrl(): string {
@@ -41,7 +48,7 @@ export class ArpegiaApiClient {
 
       // Attempt to hit the backend API
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for DSP & LangGraph pipeline
 
       const response = await fetch(this.apiUrl, {
         method: "POST",

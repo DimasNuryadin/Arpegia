@@ -34,6 +34,7 @@ class Settings(BaseSettings):
         "audio/wav",
         "audio/x-wav",
         "audio/wave",
+        "audio/vnd.wave",
         "application/octet-stream",  # Fallback for some clients, guarded by extension check
     }
 

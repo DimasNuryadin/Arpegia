@@ -60,30 +60,53 @@ docker compose up --build
 - **FastAPI Docs:** http://localhost:8000/docs
 - **Health Check:** http://localhost:8000/health
 
-### 4. Running Sub-Projects Locally
+### 4. Running Locally (Backend + Audio Engine + Frontend)
 
-#### Frontend (`apps/web`)
+#### Step 1: Start Backend API & Audio Engine (`apps/api` + `services/audio-engine`)
+In Terminal 1, create a virtual environment, install dependencies (which include both FastAPI and the Librosa/LangGraph audio engine), and start `uvicorn` on port `8000`:
+
+**macOS / Linux:**
+```bash
+cd apps/api
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r ../../services/audio-engine/requirements.txt
+PYTHONPATH=".:../../services/audio-engine" uvicorn app.main:app --reload --port 8000
+```
+
+**Windows (PowerShell):**
+```powershell
+cd apps/api
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt -r ..\..\services\audio-engine\requirements.txt
+$env:PYTHONPATH=".;..\..\services\audio-engine"
+uvicorn app.main:app --reload --port 8000
+```
+
+#### Step 2: Start Next.js Frontend (`apps/web`)
+In Terminal 2, install Node dependencies and start the development server on port `3000`:
+
 ```bash
 cd apps/web
 npm install
 npm run dev
 ```
 
-#### API Backend (`apps/api`)
-```bash
-cd apps/api
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
+#### One-Liner Local Dev Startup (from Repo Root)
+- **Windows (PowerShell):**
+  ```powershell
+  Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd apps/api; .\.venv\Scripts\Activate.ps1; uvicorn app.main:app --reload --port 8000"
+  cd apps/web; npm run dev
+  ```
+- **macOS / Linux:**
+  ```bash
+  (cd apps/api && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000) & (cd apps/web && npm run dev)
+  ```
 
-#### Audio Engine (`services/audio-engine`)
+#### Running Standalone Audio Engine CLI (`services/audio-engine`)
 ```bash
-cd services/audio-engine
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+python services/audio-engine/cli.py path/to/track.wav --styles "Neo Soul,Jazz,Pop,Fingerstyle"
 ```
 
 ---

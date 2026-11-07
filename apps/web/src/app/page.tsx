@@ -17,8 +17,8 @@ import { api } from "../lib/api";
 import { Sparkles } from "lucide-react";
 
 export default function Home() {
-  // Application State
-  const [mockMode, setMockMode] = useState<boolean>(true);
+  // Application State (Default to Live API so uploads hit http://localhost:8000/api/v1/analyze)
+  const [mockMode, setMockMode] = useState<boolean>(false);
   const [analysisData, setAnalysisData] =
     useState<AnalysisResponse>(MOCK_ANALYSIS_RESPONSE);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -64,6 +64,10 @@ export default function Home() {
       });
 
       setAnalysisData(response);
+      if (response.chords && response.chords.length > 0) {
+        setActiveChord(response.chords[0]);
+        setSelectedVoicingChord(response.chords[0].chord);
+      }
       setUploadState({
         isUploading: false,
         progress: 100,
