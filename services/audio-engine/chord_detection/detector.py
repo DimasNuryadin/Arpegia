@@ -2,6 +2,10 @@
 
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+import re
+
+from engine.audio_processor import AudioProcessor
+from engine.chord_detector import ChordDetector as CoreChordDetector
 
 
 class ChordDetectionResult(BaseModel):
@@ -20,6 +24,25 @@ class ChordDetector:
     def __init__(self, sample_rate: int = 22050, hop_length: int = 512):
         self.sample_rate = sample_rate
         self.hop_length = hop_length
+        self.processor = AudioProcessor(sample_rate=sample_rate, hop_length=hop_length)
+        self.core_detector = CoreChordDetector(sample_rate=sample_rate, hop_length=hop_length)
+
+    def _parse_root_quality(self, chord_name: str) -> tuple[str, str]:
+        match = re.match(r"^([A-G][#b]?)(.*)$", chord_name)
+        if not match:
+            return chord_name, "major"
+        root, suffix = match.groups()
+        suffix = suffix.strip()
+        quality_map = {
+            "": "major",
+            "m": "minor",
+            "7": "7",
+            "maj7": "maj7",
+            "m7": "m7",
+            "sus4": "sus4",
+        }
+        quality = quality_map.get(suffix, suffix or "major")
+        return root, quality
 
     def detect_chords(self, audio_path: str) -> List[ChordDetectionResult]:
         """Analyze an audio file and return chronological chord events.
@@ -30,5 +53,28 @@ class ChordDetector:
         Returns:
             List of detected ChordDetectionResult items.
         """
-        # Placeholder skeleton for implementation by DSP/AI agent
-        return []
+        y, sr = self.processor.load_audio(audio_path, target_sr=self.sample_rate)
+        duration = self.processor.get_duration(y, sr)
+        bpm, beat_frames, beat_times = self.processor.detect_beats(y, sr)
+        chroma = self.processor.extract_chromagram(y, sr, method="cqt")
+
+        raw_chords = self.core_detector.detect_chords(
+            chromagram=chroma,
+            duration=duration,
+            beat_times=beat_times,
+        )
+
+        results = []
+        for c in raw_chords:
+            root, quality = self._parse_root_quality(c["chord"])
+            results.append(
+                ChordDetectionResult(
+                    start_time=c["start_time"],
+                    end_time=c["end_time"],
+                    chord_name=c["chord"],
+                    root=root,
+                    quality=quality,
+                    confidence=c["confidence"],
+                )
+            )
+        return results
