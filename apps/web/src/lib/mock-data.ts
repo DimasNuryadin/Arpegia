@@ -1,0 +1,301 @@
+import { AnalysisResponse, ChordVoicingDetail } from "../types";
+
+export const MOCK_ANALYSIS_RESPONSE: AnalysisResponse = {
+  job_id: "job_arpegia_g_major_01",
+  status: "completed",
+  metadata: {
+    filename: "neo_soul_groove_g_major.mp3",
+    duration: 180.5,
+    key: "G Major",
+    bpm: 105,
+    time_signature: "4/4",
+  },
+  chords: [
+    { chord: "G", start_time: 0.0, end_time: 2.4, confidence: 0.94 },
+    { chord: "D/F#", start_time: 2.4, end_time: 4.8, confidence: 0.88 },
+    { chord: "Em7", start_time: 4.8, end_time: 7.2, confidence: 0.96 },
+    { chord: "Cmaj7", start_time: 7.2, end_time: 9.6, confidence: 0.92 },
+    { chord: "Bm7", start_time: 9.6, end_time: 12.0, confidence: 0.89 },
+    { chord: "Am9", start_time: 12.0, end_time: 14.4, confidence: 0.91 },
+    { chord: "D7sus4", start_time: 14.4, end_time: 16.8, confidence: 0.87 },
+    { chord: "G", start_time: 16.8, end_time: 19.2, confidence: 0.95 },
+    // Bar 5 - 8
+    { chord: "G", start_time: 19.2, end_time: 21.6, confidence: 0.93 },
+    { chord: "D/F#", start_time: 21.6, end_time: 24.0, confidence: 0.86 },
+    { chord: "Em7", start_time: 24.0, end_time: 26.4, confidence: 0.95 },
+    { chord: "Cmaj7", start_time: 26.4, end_time: 28.8, confidence: 0.94 },
+    { chord: "Bm7", start_time: 28.8, end_time: 31.2, confidence: 0.9 },
+    { chord: "Am9", start_time: 31.2, end_time: 33.6, confidence: 0.92 },
+    { chord: "D7sus4", start_time: 33.6, end_time: 36.0, confidence: 0.89 },
+    { chord: "G", start_time: 36.0, end_time: 38.4, confidence: 0.96 },
+    // Bridge section
+    { chord: "Cmaj7", start_time: 38.4, end_time: 43.2, confidence: 0.93 },
+    { chord: "Bm7", start_time: 43.2, end_time: 48.0, confidence: 0.91 },
+    { chord: "Am7", start_time: 48.0, end_time: 52.8, confidence: 0.92 },
+    { chord: "D7", start_time: 52.8, end_time: 57.6, confidence: 0.89 },
+    { chord: "G", start_time: 57.6, end_time: 62.4, confidence: 0.95 },
+    // Chorus
+    { chord: "Em7", start_time: 62.4, end_time: 67.2, confidence: 0.94 },
+    { chord: "Cmaj7", start_time: 67.2, end_time: 72.0, confidence: 0.96 },
+    { chord: "G", start_time: 72.0, end_time: 76.8, confidence: 0.95 },
+    { chord: "D/F#", start_time: 76.8, end_time: 81.6, confidence: 0.88 },
+    { chord: "Em7", start_time: 81.6, end_time: 86.4, confidence: 0.93 },
+    { chord: "Cmaj7", start_time: 86.4, end_time: 91.2, confidence: 0.97 },
+    { chord: "Am9", start_time: 91.2, end_time: 96.0, confidence: 0.91 },
+    { chord: "D7sus4", start_time: 96.0, end_time: 100.8, confidence: 0.89 },
+    { chord: "G", start_time: 100.8, end_time: 105.6, confidence: 0.96 },
+    // Solo / Outro loop until 180.5
+    { chord: "G", start_time: 105.6, end_time: 115.2, confidence: 0.94 },
+    { chord: "D/F#", start_time: 115.2, end_time: 124.8, confidence: 0.87 },
+    { chord: "Em7", start_time: 124.8, end_time: 134.4, confidence: 0.95 },
+    { chord: "Cmaj7", start_time: 134.4, end_time: 144.0, confidence: 0.93 },
+    { chord: "Bm7", start_time: 144.0, end_time: 153.6, confidence: 0.89 },
+    { chord: "Am9", start_time: 153.6, end_time: 163.2, confidence: 0.92 },
+    { chord: "D7sus4", start_time: 163.2, end_time: 172.8, confidence: 0.88 },
+    { chord: "G", start_time: 172.8, end_time: 180.5, confidence: 0.97 },
+  ],
+  improvisations: [
+    {
+      original_chord: "G",
+      style: "Neo Soul",
+      suggestions: ["Gmaj7", "G6/9", "Gmaj9"],
+    },
+    {
+      original_chord: "G",
+      style: "Jazz",
+      suggestions: ["Gmaj7#11", "G13", "Gmaj9"],
+    },
+    {
+      original_chord: "G",
+      style: "Fingerstyle",
+      suggestions: ["Gsus2", "Gadd9", "G/B"],
+    },
+    {
+      original_chord: "G",
+      style: "Pop",
+      suggestions: ["Gadd9", "Gsus4", "G/B"],
+    },
+    {
+      original_chord: "D/F#",
+      style: "Neo Soul",
+      suggestions: ["Dmaj7/F#", "F#m7(b5)", "D9/F#"],
+    },
+    {
+      original_chord: "D/F#",
+      style: "Jazz",
+      suggestions: ["F#dim7", "D7alt/F#", "Am6/F#"],
+    },
+    {
+      original_chord: "D/F#",
+      style: "Pop",
+      suggestions: ["Dsus2/F#", "D/A", "Bm7/F#"],
+    },
+    {
+      original_chord: "D/F#",
+      style: "Fingerstyle",
+      suggestions: ["D5/F#", "Dsus4/F#", "F#m11"],
+    },
+    {
+      original_chord: "Em7",
+      style: "Neo Soul",
+      suggestions: ["Em9", "Em11", "Eb7#9 (tritone sub)"],
+    },
+    {
+      original_chord: "Em7",
+      style: "Jazz",
+      suggestions: ["Em(maj7)", "Em6/9", "Gmaj7/E"],
+    },
+    {
+      original_chord: "Em7",
+      style: "Pop",
+      suggestions: ["Esus4", "Em9", "Cmaj7/E"],
+    },
+    {
+      original_chord: "Em7",
+      style: "Fingerstyle",
+      suggestions: ["Em7(add11)", "Esus2", "G/E"],
+    },
+    {
+      original_chord: "Cmaj7",
+      style: "Neo Soul",
+      suggestions: ["Cmaj9", "C6/9", "Cmaj7(#11)"],
+    },
+    {
+      original_chord: "Cmaj7",
+      style: "Jazz",
+      suggestions: ["Cmaj13", "Cmaj7#11", "Em7/C"],
+    },
+    {
+      original_chord: "Cmaj7",
+      style: "Pop",
+      suggestions: ["Cadd9", "Csus2", "Am7/C"],
+    },
+    {
+      original_chord: "Cmaj7",
+      style: "Fingerstyle",
+      suggestions: ["Cadd9", "Cmaj7(no3)", "Fmaj7/C"],
+    },
+    {
+      original_chord: "Am9",
+      style: "Neo Soul",
+      suggestions: ["Am11", "A7#9", "Am(add9)"],
+    },
+    {
+      original_chord: "Am9",
+      style: "Jazz",
+      suggestions: ["Am6", "Am11", "F#m7(b5)"],
+    },
+    {
+      original_chord: "Am9",
+      style: "Pop",
+      suggestions: ["Am7", "Asus2", "C/A"],
+    },
+    {
+      original_chord: "Am9",
+      style: "Fingerstyle",
+      suggestions: ["Am7(no5)", "Am9 open", "Dsus2/A"],
+    },
+    {
+      original_chord: "D7sus4",
+      style: "Neo Soul",
+      suggestions: ["D9sus4", "C/D", "Ab13 (tritone)"],
+    },
+    {
+      original_chord: "D7sus4",
+      style: "Jazz",
+      suggestions: ["D7(b9,b13)", "D13sus4", "Fm7/D"],
+    },
+    {
+      original_chord: "D7sus4",
+      style: "Pop",
+      suggestions: ["D7", "Dsus4", "Dadd9"],
+    },
+    {
+      original_chord: "D7sus4",
+      style: "Fingerstyle",
+      suggestions: ["D2", "Dsus4/A", "D5"],
+    },
+  ],
+};
+
+export const PRESET_TRACKS: Record<string, AnalysisResponse> = {
+  "neo-soul-g": MOCK_ANALYSIS_RESPONSE,
+  "acoustic-c": {
+    job_id: "job_acoustic_c_02",
+    status: "completed",
+    metadata: {
+      filename: "acoustic_sunburst_c_major.wav",
+      duration: 120.0,
+      key: "C Major",
+      bpm: 92,
+      time_signature: "4/4",
+    },
+    chords: [
+      { chord: "C", start_time: 0.0, end_time: 3.2, confidence: 0.95 },
+      { chord: "G/B", start_time: 3.2, end_time: 6.4, confidence: 0.91 },
+      { chord: "Am7", start_time: 6.4, end_time: 9.6, confidence: 0.94 },
+      { chord: "Fadd9", start_time: 9.6, end_time: 12.8, confidence: 0.93 },
+      { chord: "C", start_time: 12.8, end_time: 16.0, confidence: 0.96 },
+      { chord: "G/B", start_time: 16.0, end_time: 19.2, confidence: 0.92 },
+      { chord: "Am7", start_time: 19.2, end_time: 22.4, confidence: 0.93 },
+      { chord: "Fadd9", start_time: 22.4, end_time: 25.6, confidence: 0.95 },
+      { chord: "Dm7", start_time: 25.6, end_time: 28.8, confidence: 0.9 },
+      { chord: "G7sus4", start_time: 28.8, end_time: 32.0, confidence: 0.89 },
+      { chord: "C", start_time: 32.0, end_time: 120.0, confidence: 0.96 },
+    ],
+    improvisations: [
+      {
+        original_chord: "C",
+        style: "Fingerstyle",
+        suggestions: ["Cadd9", "Cmaj7", "C/E"],
+      },
+      {
+        original_chord: "C",
+        style: "Pop",
+        suggestions: ["Csus2", "Cadd9", "F/C"],
+      },
+      {
+        original_chord: "G/B",
+        style: "Fingerstyle",
+        suggestions: ["G6/B", "Gadd9/B", "Em7/B"],
+      },
+      {
+        original_chord: "Am7",
+        style: "Pop",
+        suggestions: ["Am9", "Asus4", "Fmaj7/A"],
+      },
+      {
+        original_chord: "Fadd9",
+        style: "Neo Soul",
+        suggestions: ["Fmaj9", "F6/9", "Fmaj7#11"],
+      },
+    ],
+  },
+  "jazz-ii-v-i": {
+    job_id: "job_jazz_standard_03",
+    status: "completed",
+    metadata: {
+      filename: "autumn_leaves_ii_v_i.mp3",
+      duration: 144.0,
+      key: "Bb Major",
+      bpm: 124,
+      time_signature: "4/4",
+    },
+    chords: [
+      { chord: "Cm7", start_time: 0.0, end_time: 2.0, confidence: 0.96 },
+      { chord: "F7", start_time: 2.0, end_time: 4.0, confidence: 0.93 },
+      { chord: "Bbmaj7", start_time: 4.0, end_time: 6.0, confidence: 0.95 },
+      { chord: "Ebmaj7", start_time: 6.0, end_time: 8.0, confidence: 0.92 },
+      { chord: "Am7(b5)", start_time: 8.0, end_time: 10.0, confidence: 0.89 },
+      { chord: "D7(b9)", start_time: 10.0, end_time: 12.0, confidence: 0.91 },
+      { chord: "Gm7", start_time: 12.0, end_time: 16.0, confidence: 0.94 },
+      { chord: "Cm7", start_time: 16.0, end_time: 18.0, confidence: 0.95 },
+      { chord: "F7", start_time: 18.0, end_time: 20.0, confidence: 0.93 },
+      { chord: "Bbmaj7", start_time: 20.0, end_time: 144.0, confidence: 0.96 },
+    ],
+    improvisations: [
+      {
+        original_chord: "Cm7",
+        style: "Jazz",
+        suggestions: ["Cm9", "Cm11", "Ebmaj7/C"],
+      },
+      {
+        original_chord: "F7",
+        style: "Jazz",
+        suggestions: ["F13", "F7alt", "B7#11 (tritone sub)"],
+      },
+      {
+        original_chord: "Bbmaj7",
+        style: "Neo Soul",
+        suggestions: ["Bbmaj9", "Bb6/9", "Bbmaj7#11"],
+      },
+    ],
+  },
+};
+
+// Guitar fret positions: [6th-E, 5th-A, 4th-D, 3rd-G, 2nd-B, 1st-e]
+// 'x' = muted, 0 = open string, number = fret index
+export const GUITAR_CHORD_VOICINGS: Record<string, ChordVoicingDetail> = {
+  G: { chord: "G", frets: [3, 2, 0, 0, 0, 3], description: "Standard open G major triad" },
+  "D/F#": { chord: "D/F#", frets: [2, "x", 0, 2, 3, 2], description: "First inversion D triad with F# in the bass" },
+  Em7: { chord: "Em7", frets: [0, 2, 2, 0, 3, 3], description: "Open Em7 acoustic voicing" },
+  Cmaj7: { chord: "Cmaj7", frets: ["x", 3, 2, 0, 0, 0], description: "Lush open C major 7th" },
+  Bm7: { chord: "Bm7", frets: ["x", 2, 4, 2, 3, 2], baseFret: 2, description: "Root-5 minor 7th barre chord" },
+  Am9: { chord: "Am9", frets: [5, "x", 5, 5, 5, 7], baseFret: 5, description: "Neo-Soul root-6 Am9 voicing" },
+  Am7: { chord: "Am7", frets: ["x", 0, 2, 0, 1, 0], description: "Warm open Am7" },
+  D7sus4: { chord: "D7sus4", frets: ["x", "x", 0, 2, 1, 3], description: "Suspended dominant with melodic pull" },
+  D7: { chord: "D7", frets: ["x", "x", 0, 2, 1, 2], description: "Dominant 7th resolution" },
+  C: { chord: "C", frets: ["x", 3, 2, 0, 1, 0], description: "Standard open C major triad" },
+  "G/B": { chord: "G/B", frets: ["x", 2, 0, 0, 3, 3], description: "G major with B in bass (smooth stepwise motion)" },
+  Fadd9: { chord: "Fadd9", frets: [1, 3, 3, 2, 1, 3], description: "Modern pop/acoustic F chord with high G" },
+  Dm7: { chord: "Dm7", frets: ["x", "x", 0, 2, 1, 1], description: "Open D minor 7th" },
+  Gmaj7: { chord: "Gmaj7", frets: [3, "x", 4, 4, 3, "x"], baseFret: 3, description: "Smooth Neo-Soul / Jazz root-6 drop-2 voicing" },
+  "G6/9": { chord: "G6/9", frets: [3, 2, 2, 2, 3, 3], description: "Airy Brazilian Bossa / Neo Soul voicing" },
+  Gmaj9: { chord: "Gmaj9", frets: [3, "x", 4, 2, 3, "x"], baseFret: 3, description: "Extended major 9th voicing" },
+  Cadd9: { chord: "Cadd9", frets: ["x", 3, 2, 0, 3, 3], description: "Classic shimmering acoustic voicing" },
+  "Gmaj7#11": { chord: "Gmaj7#11", frets: [3, "x", 4, 4, 2, "x"], description: "Lydian modal guitar voicing" },
+  Em9: { chord: "Em9", frets: [0, 2, 0, 0, 0, 2], description: "Rich, contemplative 9th chord" },
+  Em11: { chord: "Em11", frets: [0, 2, 2, 2, 3, 3], description: "Modern neo-soul open extension" },
+  Cmaj9: { chord: "Cmaj9", frets: ["x", 3, 2, 4, 3, "x"], baseFret: 3, description: "Root-5 jazz/soul major 9th" },
+  "C6/9": { chord: "C6/9", frets: ["x", 3, 2, 2, 3, 3], description: "Pastoral pentatonic chord" },
+};
