@@ -32,6 +32,8 @@ interface AudioPlayerTimelineProps {
   onActiveChordChange?: (chord: ChordData | null) => void;
   selectedChordForVoicing?: ChordData | null;
   onSelectChordForVoicing?: (chord: ChordData) => void;
+  onPlaybackTimeChange?: (currentTime: number, isPlaying: boolean) => void;
+  seekRequest?: { time: number; seq: number } | null;
 }
 
 export function AudioPlayerTimeline({
@@ -41,6 +43,8 @@ export function AudioPlayerTimeline({
   onActiveChordChange,
   selectedChordForVoicing,
   onSelectChordForVoicing,
+  onPlaybackTimeChange,
+  seekRequest,
 }: AudioPlayerTimelineProps) {
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -59,6 +63,7 @@ export function AudioPlayerTimeline({
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const lastSynthChordRef = useRef<string | null>(null);
+  const lastHandledSeekSeqRef = useRef<number>(0);
 
   // Derive audioUrl using useMemo
   const audioUrl = useMemo(() => {
@@ -96,6 +101,18 @@ export function AudioPlayerTimeline({
       const delta = (timestamp - lastTimestamp) / 1000;
       lastTimestamp = timestamp;
 
+      if (
+        seekRequest &&
+        seekRequest.seq !== lastHandledSeekSeqRef.current
+      ) {
+        lastHandledSeekSeqRef.current = seekRequest.seq;
+        const clamped = Math.max(0, Math.min(totalDuration, seekRequest.time));
+        setCurrentTime(clamped);
+        if (audioRef.current && audioUrl) {
+          audioRef.current.currentTime = clamped;
+        }
+      }
+
       if (isPlaying) {
         if (audioRef.current && audioUrl) {
           // Sync from actual audio element
@@ -127,7 +144,7 @@ export function AudioPlayerTimeline({
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [isPlaying, audioUrl, playbackRate, totalDuration]);
+  }, [isPlaying, audioUrl, playbackRate, totalDuration, seekRequest]);
 
   // Notify parent of active chord change & audition tones
   useEffect(() => {
@@ -192,14 +209,22 @@ export function AudioPlayerTimeline({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
 
+  // Notify parent of playback time & playing state for synchronized Tablature playhead
+  useEffect(() => {
+    onPlaybackTimeChange?.(currentTime, isPlaying);
+  }, [currentTime, isPlaying, onPlaybackTimeChange]);
+
   // Seek to specific timestamp
-  const seekTo = (timestamp: number) => {
-    const clampedTime = Math.max(0, Math.min(totalDuration, timestamp));
-    setCurrentTime(clampedTime);
-    if (audioRef.current && audioUrl) {
-      audioRef.current.currentTime = clampedTime;
-    }
-  };
+  const seekTo = useCallback(
+    (timestamp: number) => {
+      const clampedTime = Math.max(0, Math.min(totalDuration, timestamp));
+      setCurrentTime(clampedTime);
+      if (audioRef.current && audioUrl) {
+        audioRef.current.currentTime = clampedTime;
+      }
+    },
+    [totalDuration, audioUrl]
+  );
 
   // Jump by delta seconds
   const jumpTime = (delta: number) => {
