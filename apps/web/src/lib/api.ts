@@ -167,7 +167,8 @@ export class ArpegiaApiClient {
     };
 
     const envMock = process.env.NEXT_PUBLIC_USE_MOCK === "true";
-    if (mockMode || envMock) {
+    const isMock = typeof mockMode === "boolean" ? mockMode : envMock;
+    if (isMock) {
       return {
         analysis: optimisticAnalysis,
         persistedToBackend: false,

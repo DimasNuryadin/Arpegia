@@ -539,14 +539,16 @@ class AnalyzerService:
                     else TablatureData.model_validate(raw_tablature)
                 )
                 if tab_data.measures:
-                    # Ensure every note has consistent midi/note_name and non-empty ascii_tab
+                    # Fill any missing pitch details if needed
                     for measure in tab_data.measures:
                         for note in measure.notes:
-                            midi_val, note_name = compute_pitch_from_string_fret(
-                                note.string, note.fret, tab_data.tuning, tab_data.capo
-                            )
-                            note.midi = midi_val
-                            note.note_name = note_name
+                            if not note.midi or not note.note_name:
+                                midi_val, note_name = compute_pitch_from_string_fret(
+                                    note.string, note.fret, tab_data.tuning, tab_data.capo
+                                )
+                                note.midi = midi_val
+                                note.note_name = note_name
+                    # If ascii_tab is missing or blank, render it
                     if not tab_data.ascii_tab or not tab_data.ascii_tab.strip():
                         tab_data.ascii_tab = render_ascii_tab(
                             tab_data.measures, tab_data.tuning
@@ -579,11 +581,13 @@ class AnalyzerService:
                 filename=original_filename,
             )
 
-            if not pipeline_output or not pipeline_output.get("chords"):
+            if not pipeline_output:
                 return None
 
             raw_meta = pipeline_output.get("metadata", {})
             duration = float(raw_meta.get("duration", 0.0))
+            if duration <= 0:
+                duration = self.extract_audio_duration(file_path, original_filename)
             if duration <= 0:
                 return None
 
