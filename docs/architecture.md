@@ -2,7 +2,7 @@
 
 ## 1. System Overview
 
-Arpegia is an AI-powered Guitar Intelligence Platform engineered to ingest audio files (MP3/WAV), extract musical key, tempo, and chord progressions, synthesize biomechanically realistic guitar tablature, and provide AI-driven chord reharmonizations and fingerstyle arrangements.
+Arpegia is an AI-powered Guitar Intelligence Platform engineered to ingest audio files (MP3/WAV), extract musical key, tempo, and chord progressions, synthesize biomechanically realistic guitar tablature (`TablatureData`), generate 6-string chord voicing diagrams (`ChordDiagram`), enable interactive fretboard & tab editing, and provide AI-driven chord reharmonizations and fingerstyle arrangements.
 
 The repository is organized as a multi-package monorepo designed for clean boundary separation and conflict-free parallel development across multiple specialized agents.
 
@@ -13,64 +13,81 @@ The repository is organized as a multi-package monorepo designed for clean bound
 ```
 arpegia/
 ├── apps/
-│   ├── web/                  # Next.js App Router (TypeScript, Tailwind, React 19)
-│   └── api/                  # Python FastAPI REST & WebSocket Gateway
+│   ├── web/                  # Next.js App Router (TypeScript, Tailwind, React 19) — Port 3000
+│   └── api/                  # Python FastAPI REST Gateway — Port 8000
 ├── services/
-│   └── audio-engine/         # Python DSP (Librosa, FFmpeg) & LangGraph AI
+│   └── audio-engine/         # Python DSP (Librosa, FFmpeg), Tab Synthesizer & LangGraph AI
 ├── packages/
-│   └── shared-types/         # Cross-package TypeScript definitions & contracts
+│   └── shared-types/         # Cross-package TypeScript (index.ts) & Pydantic v2 (schemas.py) contracts
 ├── infrastructure/
 │   └── docker/               # Dedicated Dockerfiles for each service
-├── docs/                     # Architectural specs, RFCs, and API documentation
+├── docs/
+│   ├── architecture.md       # System architecture & agent boundary specifications
+│   └── api-contract.md       # Canonical Phase 1 & Phase 2 REST & schema contracts
+├── AGENT_RULES.md            # Strict Gate 2 directory jail & read-only enforcement rules
 ├── docker-compose.yml        # Local development orchestration
 ├── .env.example              # Canonical environment variable specifications
 ├── .gitignore                # Unified monorepo ignore rules
 └── README.md                 # Primary project entry point
 ```
 
-### Boundary Guidelines for Agents
+### Canonical Port Registry
+
+| Service | Directory | Port | Base URL |
+| :--- | :--- | :--- | :--- |
+| **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000` |
+| **Audio Engine (DSP & LangGraph)** | `services/audio-engine/` | In-process / Worker | Invoked by `apps/api` or CLI |
+
+### Boundary Guidelines for Parallel Agents (Gate 2)
 
 | Path | Primary Language | Boundary Scope & Responsibilities | Allowed Cross-Imports |
 | :--- | :--- | :--- | :--- |
-| **`apps/web`** | TypeScript / React | User interface, waveform visualization, interactive fretboard & chord progression cards, AlphaTab playback. | Can consume `@arpegia/shared-types`. Must **never** import backend Python files. |
-| **`apps/api`** | Python (FastAPI) | HTTP routing, authentication, PostgreSQL persistence, task dispatching to Redis/Celery, WebSocket progress streaming. | Dispatches jobs to `services/audio-engine` via task queues. |
-| **`services/audio-engine`** | Python | Core audio signal processing (Librosa), chord detection, polyphonic note tracking, LangGraph music intelligence. | Operates as a stateless or worker-backed processing engine. |
-| **`packages/shared-types`** | TypeScript | Source of truth for API response contracts, chord event schemas, and guitar tab data structures. | Imported by `apps/web`. Serves as reference contract for `apps/api` Pydantic models. |
+| **`apps/web`** | TypeScript / React | User interface, audio timeline, `ChordDiagram` visualizer, `TablatureData` viewer, Interactive Tab Editor (`PUT /api/v1/analyze/{job_id}/tablature`), ASCII tab export. | Consumes `@arpegia/shared-types`. Must **never** modify `packages/` or backend Python files during Gate 2. |
+| **`apps/api`** | Python (FastAPI) | HTTP routing (`POST /api/v1/analyze`, `GET /api/v1/analyze/{job_id}`, `PUT /api/v1/analyze/{job_id}/tablature`), Pydantic validation, job persistence, and `services/audio-engine` orchestration. | References `packages/shared-types/schemas.py` and invokes `services/audio-engine`. |
+| **`services/audio-engine`** | Python | Core audio signal processing (Librosa), key/BPM/chord detection, polyphonic/monophonic note transcription, biomechanical guitar fret-string optimization (`TabNote`, `TabMeasure`, `ascii_tab`), chord diagram resolution (`ChordDiagram`), and LangGraph music intelligence. | Operates as a modular processing engine invoked by `apps/api` or standalone CLI. |
+| **`packages/shared-types`** | TypeScript & Python | **READ-ONLY in Gate 2.** Source of truth for TypeScript interfaces (`index.ts`) and Python Pydantic v2 schemas (`schemas.py`). | Imported/mirrored by `apps/web`, `apps/api`, and `services/audio-engine`. |
 | **`infrastructure/`** | Docker / Compose | Containerization scripts and system setup. | References app files from build contexts. |
 
 ---
 
-## 3. Communication Flows
+## 3. Phase 2 Communication Flows
 
 ```
-[apps/web (Next.js)]
+[apps/web (Next.js :3000)]
        │
-       ├──── (1) POST /api/v1/audio/upload (Multipart) ────► [apps/api (FastAPI)]
-       │                                                            │
-       │                                                            ▼ (2) Enqueue Job
-       │                                                     [Redis Queue]
-       │                                                            │
-       │                                                            ▼ (3) Worker Ingestion
-       │◄─── (5) WebSocket Job Progress Updates ─────────── [services/audio-engine]
-       │                                                            │
-       └──── (6) GET /api/v1/tracks/{id}/tab ◄──────────────────────┘ (4) Persist Analysis
+       ├──── (1) POST /api/v1/analyze (Multipart MP3/WAV) ─────────► [apps/api (FastAPI :8000)]
+       │                                                                    │
+       │                                                                    ▼ (2) Run Pipeline
+       │                                                            [services/audio-engine]
+       │                                                             ├─ KeyAndTempoNode
+       │                                                             ├─ ChordDetectionNode
+       │                                                             ├─ ImprovisationNode
+       │                                                             ├─ ChordDiagramNode
+       │                                                             └─ TablatureGenerationNode
+       │                                                                    │
+       │◄─── (3) AnalysisResponse (chords, diagrams, tablature) ◄───────────┘
+       │
+       └──── (4) PUT /api/v1/analyze/{job_id}/tablature ───────────► [apps/api (FastAPI :8000)]
+             (Interactive Tab Editor validates string/fret/technique        │
+              edits, recomputes MIDI/note_name & regenerates ascii_tab) ◄───┘
 ```
 
-1. **Client to API Gateway:** `apps/web` communicates with `apps/api` exclusively through typed REST endpoints and WebSockets for real-time analysis progress.
-2. **API to Audio Engine:** `apps/api` communicates with `services/audio-engine` via asynchronous job queues (Celery over Redis) to ensure long-running audio processing never blocks HTTP threads.
-3. **Data Storage:** Audio files are stored in S3/MinIO; relational data and high-frequency chord timeline entries are stored in PostgreSQL.
+1. **Audio Upload & Guitar Intelligence Analysis (`POST /api/v1/analyze`):** `apps/web` uploads an audio file to `apps/api`, which invokes `services/audio-engine` (with deterministic fallback) to return `AnalysisResponse` containing `metadata`, `chords`, `improvisations`, `chord_diagrams`, and `tablature` (`measures` + `ascii_tab`).
+2. **Job Retrieval (`GET /api/v1/analyze/{job_id}`):** Retrieves a previously computed `AnalysisResponse` by `job_id`.
+3. **Interactive Tablature Editing (`PUT /api/v1/analyze/{job_id}/tablature`):** When a user edits note positions (`string`, `fret`, `technique`) or tuning/capo in the Interactive Tab Editor (`apps/web`), `apps/api` validates physical guitar constraints (`string` 1–6, `fret` 0–24), recalculates `midi` and `note_name`, regenerates the 6-line `ascii_tab`, persists the updated job, and returns the updated `AnalysisResponse`.
 
 ---
 
-## 4. Multi-Agent Development Principles
+## 4. Multi-Agent Development Principles (Gate 1 & Gate 2)
 
-To prevent merge conflicts and maintain system integrity when multiple agents or contributors work concurrently:
+To prevent merge conflicts and maintain system integrity when multiple agents work concurrently (see [`AGENT_RULES.md`](../AGENT_RULES.md)):
 
-1. **Strict Folder Isolation:**
-   - Frontend agents must restrict code changes to `apps/web/` and `packages/shared-types/`.
-   - Backend API agents must restrict code changes to `apps/api/`.
-   - AI / Audio processing agents must restrict code changes to `services/audio-engine/`.
-2. **No Root Package Contamination:**
-   - No `package.json` or `requirements.txt` shall be placed in the repository root. All dependencies are scoped strictly to their respective app or service folder.
-3. **Schema First:**
-   - Changes to API payload formats or musical structures must be updated first in `packages/shared-types` and mirrored in `apps/api/app/schemas/` before UI or service implementations are updated.
+1. **Strict Directory Jails (Gate 2):**
+   - **Web Agent** is strictly confined to `apps/web/`.
+   - **API Agent** is strictly confined to `apps/api/`.
+   - **Audio Engine Agent** is strictly confined to `services/audio-engine/`.
+2. **Read-Only Shared Contracts in Gate 2:**
+   - `packages/`, `docs/api-contract.md`, `docs/architecture.md`, `AGENT_RULES.md`, and `.env.example` are **READ-ONLY** during Gate 2 execution.
+3. **No Root Package Contamination:**
+   - Never run `npm install` at the repository root or create `package.json`, `package-lock.json`, `node_modules/`, or `requirements.txt` in the root directory.

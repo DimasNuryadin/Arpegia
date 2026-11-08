@@ -1,3 +1,5 @@
+import { TablatureData } from './tabs';
+
 export interface ChordEvent {
   id: string;
   analysisId: string;
@@ -19,7 +21,7 @@ export interface ChordProgressionAnalysis {
   chords: ChordEvent[];
 }
 
-// Phase 1 MVP Shared Data Contract (Web <-> API <-> Audio Engine)
+// Phase 1 & Phase 2 Shared Data Contract (Web <-> API <-> Audio Engine)
 export interface SongMetadata {
   filename: string;
   duration: number;
@@ -43,11 +45,29 @@ export interface ImprovisationData {
   suggestions: string[];
 }
 
+export interface ChordDiagram {
+  chord: string; // e.g., "G", "Cmaj7"
+  frets: number[]; // length 6, Low E to High E, -1 for muted string, 0 for open string
+  fingers: number[]; // length 6, 0 for open/muted, 1-4 for index to pinky
+  base_fret: number; // default 1
+}
+
 export interface AnalysisResponse {
   job_id: string;
   status: 'completed' | 'processing' | 'failed';
   metadata: SongMetadata;
   chords: ChordData[];
   improvisations: ImprovisationData[];
+  chord_diagrams: ChordDiagram[];
+  tablature: TablatureData;
 }
 
+export interface ErrorDetail {
+  code: string;
+  message: string;
+  details: any;
+}
+
+export interface ErrorEnvelope {
+  error: ErrorDetail;
+}
