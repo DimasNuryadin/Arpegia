@@ -472,7 +472,8 @@ export function AudioPlayerTimeline({
           {/* Simulated Waveform Bars */}
           <div className="absolute inset-0 flex items-center justify-between px-2 gap-[2px] opacity-40 group-hover:opacity-60 transition-opacity pointer-events-none">
             {Array.from({ length: 90 }).map((_, i) => {
-              const height = 15 + Math.sin(i * 0.3) * 35 + ((i % 5) * 8);
+              const rawHeight = 15 + Math.sin(i * 0.3) * 35 + ((i % 5) * 8);
+              const height = Math.round(Math.min(95, Math.max(20, rawHeight)));
               const isPast = (i / 90) * totalDuration <= currentTime;
               return (
                 <div
@@ -480,7 +481,7 @@ export function AudioPlayerTimeline({
                   className={`w-[2px] rounded-full transition-colors ${
                     isPast ? "bg-amber-400" : "bg-slate-600"
                   }`}
-                  style={{ height: `${Math.min(95, Math.max(20, height))}%` }}
+                  style={{ height: `${height}%` }}
                 />
               );
             })}
