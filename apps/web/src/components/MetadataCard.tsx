@@ -28,14 +28,27 @@ export function MetadataCard({
 
   // Metronome visual pulse synced to BPM
   useEffect(() => {
-    if (!isPlaying || !metadata.bpm) return;
-    const intervalMs = (60 / metadata.bpm) * 1000;
+    if (!isPlaying || !metadata.bpm) {
+      setPulse(false);
+      return;
+    }
+    const bpm = metadata.bpm;
+    const intervalMs = Math.max(100, (60 / bpm) * 1000);
+    let pulseTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const interval = setInterval(() => {
       setPulse(true);
-      setTimeout(() => setPulse(false), 120);
+      if (pulseTimeout) clearTimeout(pulseTimeout);
+      pulseTimeout = setTimeout(() => {
+        setPulse(false);
+      }, 120);
     }, intervalMs);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (pulseTimeout) clearTimeout(pulseTimeout);
+      setPulse(false);
+    };
   }, [isPlaying, metadata.bpm]);
 
   const formatDuration = (seconds: number): string => {

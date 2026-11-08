@@ -64,6 +64,7 @@ export function AudioPlayerTimeline({
   const animFrameRef = useRef<number | null>(null);
   const lastSynthChordRef = useRef<string | null>(null);
   const lastHandledSeekSeqRef = useRef<number>(0);
+  const lastNotifiedTimeRef = useRef<number>(-1);
 
   // Derive audioUrl using useMemo
   const audioUrl = useMemo(() => {
@@ -116,7 +117,13 @@ export function AudioPlayerTimeline({
       if (isPlaying) {
         if (audioRef.current && audioUrl) {
           // Sync from actual audio element
-          setCurrentTime(audioRef.current.currentTime);
+          const audioCurrent = audioRef.current.currentTime;
+          setCurrentTime((prev) => {
+            if (Math.abs(prev - audioCurrent) > 0.02) {
+              return audioCurrent;
+            }
+            return prev;
+          });
           if (audioRef.current.ended) {
             setIsPlaying(false);
             setCurrentTime(0);
@@ -209,9 +216,13 @@ export function AudioPlayerTimeline({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
 
-  // Notify parent of playback time & playing state for synchronized Tablature playhead
+  // Notify parent of playback time & playing state for synchronized Tablature playhead (throttled)
   useEffect(() => {
-    onPlaybackTimeChange?.(currentTime, isPlaying);
+    // Only notify parent if time difference is meaningful (> 0.05s) or play state changed
+    if (Math.abs(currentTime - lastNotifiedTimeRef.current) >= 0.05 || !isPlaying) {
+      lastNotifiedTimeRef.current = currentTime;
+      onPlaybackTimeChange?.(currentTime, isPlaying);
+    }
   }, [currentTime, isPlaying, onPlaybackTimeChange]);
 
   // Seek to specific timestamp
