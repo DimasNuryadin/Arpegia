@@ -3,6 +3,9 @@
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 
+from engine.audio_processor import AudioProcessor
+from engine.tab_transcriber import TabTranscriber
+
 
 class NoteEvent(BaseModel):
     """Note event with pitch, onset, duration, and velocity."""
@@ -18,9 +21,11 @@ class AudioTranscriber:
 
     def __init__(self, sample_rate: int = 22050):
         self.sample_rate = sample_rate
+        self.processor = AudioProcessor(sample_rate=sample_rate)
+        self.transcriber = TabTranscriber(sample_rate=sample_rate)
 
     def transcribe(self, audio_path: str) -> List[NoteEvent]:
-        """Transcribe polyphonic audio into discrete note events.
+        """Transcribe audio into discrete NoteEvent items.
 
         Args:
             audio_path: Path to the target audio file (WAV/MP3).
@@ -28,5 +33,19 @@ class AudioTranscriber:
         Returns:
             List of detected NoteEvent items.
         """
-        # Placeholder skeleton for implementation by DSP/AI agent
-        return []
+        y, sr = self.processor.load_audio(audio_path, target_sr=self.sample_rate)
+        duration = self.processor.get_duration(y, sr)
+        raw_notes = self.transcriber.extract_notes_from_audio(y=y, sr=sr, duration=duration)
+
+        events: List[NoteEvent] = []
+        for n in raw_notes:
+            events.append(
+                NoteEvent(
+                    pitch_midi=n["midi"],
+                    pitch_name=n["note_name"],
+                    start_time=n["start_time"],
+                    duration=n["duration"],
+                    velocity=n.get("confidence", 0.8),
+                )
+            )
+        return events
