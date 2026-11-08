@@ -1,4 +1,4 @@
-"""Tests for audio analysis upload and retrieval endpoints."""
+"""Tests for audio analysis upload, job retrieval, and Phase 2 interactive tablature endpoints."""
 
 import io
 import wave
@@ -41,7 +41,7 @@ def create_synthetic_chord_wav_bytes(
 
 @pytest.mark.anyio
 async def test_analyze_valid_mp3(client: AsyncClient) -> None:
-    """Verify successful upload of an MP3 file matches the shared data contract."""
+    """Verify successful upload of an MP3 file matches the Phase 1 + Phase 2 shared data contract."""
     dummy_mp3 = b"\xff\xfb\x90\x64" + b"\x00" * 1024  # Standard MP3 frame header + padding
     files = {"file": ("acoustic_riff.mp3", dummy_mp3, "audio/mpeg")}
 
@@ -84,6 +84,43 @@ async def test_analyze_valid_mp3(client: AsyncClient) -> None:
     assert isinstance(first_imp["suggestions"], list)
     assert "Gmaj7" in first_imp["suggestions"]
 
+    # Phase 2: Chord Diagrams Assertions
+    assert "chord_diagrams" in data
+    assert isinstance(data["chord_diagrams"], list)
+    assert len(data["chord_diagrams"]) >= 1
+    first_diagram = data["chord_diagrams"][0]
+    assert first_diagram["chord"] == "G"
+    assert first_diagram["frets"] == [3, 2, 0, 0, 0, 3]
+    assert first_diagram["fingers"] == [2, 1, 0, 0, 0, 3]
+    assert first_diagram["base_fret"] == 1
+
+    # Phase 2: Tablature Assertions
+    assert "tablature" in data
+    tab = data["tablature"]
+    assert tab["tuning"] == ["E2", "A2", "D3", "G3", "B3", "E4"]
+    assert tab["capo"] == 0
+    assert tab["difficulty"] in ("Beginner", "Intermediate", "Advanced")
+    assert isinstance(tab["measures"], list)
+    assert len(tab["measures"]) >= 1
+
+    m1 = tab["measures"][0]
+    assert m1["measure_number"] == 1
+    assert isinstance(m1["notes"], list)
+    assert len(m1["notes"]) >= 1
+    n1 = m1["notes"][0]
+    assert n1["id"] == "note-1"
+    assert n1["string"] == 6
+    assert n1["fret"] == 3
+    assert n1["midi"] == 43
+    assert n1["note_name"] == "G2"
+    assert n1["technique"] == "normal"
+
+    # 6-line ASCII tab preview assertions
+    ascii_lines = tab["ascii_tab"].strip().split("\n")
+    assert len(ascii_lines) == 6
+    assert ascii_lines[0].startswith("e|")
+    assert ascii_lines[5].startswith("E|-3")
+
 
 @pytest.mark.anyio
 async def test_analyze_valid_wav(client: AsyncClient) -> None:
@@ -99,6 +136,9 @@ async def test_analyze_valid_wav(client: AsyncClient) -> None:
     assert data["metadata"]["filename"] == "guitar_solo.wav"
     assert data["metadata"]["duration"] == 2.5
     assert len(data["chords"]) > 0
+    assert len(data["chord_diagrams"]) > 0
+    assert len(data["tablature"]["measures"]) > 0
+    assert len(data["tablature"]["ascii_tab"].splitlines()) == 6
 
 
 @pytest.mark.anyio
@@ -117,6 +157,138 @@ async def test_get_analysis_job_by_id(client: AsyncClient) -> None:
     assert retrieved["job_id"] == job_id
     assert retrieved["metadata"]["filename"] == "track.mp3"
     assert retrieved["status"] == "completed"
+    assert "chord_diagrams" in retrieved
+    assert "tablature" in retrieved
+
+
+@pytest.mark.anyio
+async def test_put_tablature_patch_notes_updates_midi_and_ascii_tab(client: AsyncClient) -> None:
+    """Verify PUT /api/v1/analyze/{job_id}/tablature updates note string/fret/technique,
+    recomputes midi & note_name, and regenerates the 6-line ascii_tab.
+    """
+    dummy_mp3 = b"\xff\xfb\x90\x64" + b"\x00" * 512
+    files = {"file": ("editor_test.mp3", dummy_mp3, "audio/mpeg")}
+
+    post_resp = await client.post("/api/v1/analyze", files=files)
+    assert post_resp.status_code == 200
+    job_id = post_resp.json()["job_id"]
+
+    # Edit note-1: move from (string=6, fret=3 -> G2/43) to (string=5, fret=10, slide -> G3/55)
+    update_payload = {
+        "capo": 0,
+        "difficulty": "Intermediate",
+        "notes": [
+            {
+                "id": "note-1",
+                "string": 5,
+                "fret": 10,
+                "technique": "slide",
+            }
+        ],
+    }
+
+    put_resp = await client.put(f"/api/v1/analyze/{job_id}/tablature", json=update_payload)
+    assert put_resp.status_code == 200
+    updated = put_resp.json()
+
+    tab = updated["tablature"]
+    assert tab["difficulty"] == "Intermediate"
+    n1 = tab["measures"][0]["notes"][0]
+    assert n1["id"] == "note-1"
+    assert n1["string"] == 5
+    assert n1["fret"] == 10
+    assert n1["technique"] == "slide"
+    assert n1["midi"] == 55  # A2 (45) + 10 = 55 (G3)
+    assert n1["note_name"] == "G3"
+
+    # Verify 6-line ascii_tab reflects fret 10 with slide '/' on the A string (line index 4)
+    ascii_lines = tab["ascii_tab"].splitlines()
+    assert len(ascii_lines) == 6
+    assert "10/" in ascii_lines[4]  # A string line
+
+    # Verify persistence via GET /api/v1/analyze/{job_id}
+    get_resp = await client.get(f"/api/v1/analyze/{job_id}")
+    assert get_resp.status_code == 200
+    persisted_tab = get_resp.json()["tablature"]
+    assert persisted_tab["measures"][0]["notes"][0]["fret"] == 10
+    assert "10/" in persisted_tab["ascii_tab"]
+
+
+@pytest.mark.anyio
+async def test_put_tablature_full_measures_replacement(client: AsyncClient) -> None:
+    """Verify PUT /api/v1/analyze/{job_id}/tablature accepts full measures list."""
+    dummy_mp3 = b"\xff\xfb\x90\x64" + b"\x00" * 512
+    post_resp = await client.post(
+        "/api/v1/analyze", files={"file": ("measures.mp3", dummy_mp3, "audio/mpeg")}
+    )
+    job_id = post_resp.json()["job_id"]
+
+    full_update = {
+        "tuning": ["E2", "A2", "D3", "G3", "B3", "E4"],
+        "capo": 2,
+        "difficulty": "Advanced",
+        "measures": [
+            {
+                "measure_number": 1,
+                "start_time": 0.0,
+                "end_time": 2.0,
+                "notes": [
+                    {
+                        "id": "note-1",
+                        "start_time": 0.0,
+                        "duration": 0.5,
+                        "string": 1,
+                        "fret": 5,
+                        "midi": 64,
+                        "note_name": "E4",
+                        "confidence": 1.0,
+                        "technique": "hammer-on",
+                    }
+                ],
+            }
+        ],
+    }
+
+    put_resp = await client.put(f"/api/v1/analyze/{job_id}/tablature", json=full_update)
+    assert put_resp.status_code == 200
+    tab = put_resp.json()["tablature"]
+    assert tab["capo"] == 2
+    assert tab["difficulty"] == "Advanced"
+    note = tab["measures"][0]["notes"][0]
+    # High E4 (64) + capo 2 + fret 5 = 71 (B4)
+    assert note["midi"] == 71
+    assert note["note_name"] == "B4"
+    assert "5h" in tab["ascii_tab"].splitlines()[0]
+
+
+@pytest.mark.anyio
+async def test_put_tablature_rejects_out_of_range_fret_and_string(client: AsyncClient) -> None:
+    """Verify PUT /api/v1/analyze/{job_id}/tablature rejects fret > 24 or string > 6 with 422."""
+    dummy_mp3 = b"\xff\xfb\x90\x64" + b"\x00" * 512
+    post_resp = await client.post(
+        "/api/v1/analyze", files={"file": ("invalid_edit.mp3", dummy_mp3, "audio/mpeg")}
+    )
+    job_id = post_resp.json()["job_id"]
+
+    # Out-of-range fret (fret = 29 > 24)
+    bad_fret_resp = await client.put(
+        f"/api/v1/analyze/{job_id}/tablature",
+        json={"notes": [{"id": "note-1", "string": 6, "fret": 29, "technique": "normal"}]},
+    )
+    assert bad_fret_resp.status_code in (400, 422)
+    err_data = bad_fret_resp.json()
+    assert "error" in err_data
+    assert err_data["error"]["code"] == "VALIDATION_ERROR"
+
+    # Out-of-range string (string = 7 > 6)
+    bad_string_resp = await client.put(
+        f"/api/v1/analyze/{job_id}/tablature",
+        json={"notes": [{"id": "note-1", "string": 7, "fret": 5, "technique": "normal"}]},
+    )
+    assert bad_string_resp.status_code in (400, 422)
+    err_data_2 = bad_string_resp.json()
+    assert "error" in err_data_2
+    assert err_data_2["error"]["code"] == "VALIDATION_ERROR"
 
 
 @pytest.mark.anyio
@@ -127,6 +299,7 @@ async def test_get_nonexistent_job(client: AsyncClient) -> None:
     data = response.json()
     assert "detail" in data
     assert "not found" in data["detail"].lower()
+    assert data["error"]["code"] == "JOB_NOT_FOUND"
 
 
 @pytest.mark.anyio
@@ -137,6 +310,7 @@ async def test_reject_disallowed_extension(client: AsyncClient) -> None:
     assert response.status_code == 400
     data = response.json()
     assert "unsupported file format" in data["detail"].lower()
+    assert data["error"]["code"] == "INVALID_AUDIO_FORMAT"
 
 
 @pytest.mark.anyio
@@ -147,6 +321,7 @@ async def test_reject_disallowed_mime_type(client: AsyncClient) -> None:
     assert response.status_code == 400
     data = response.json()
     assert "unsupported audio mime type" in data["detail"].lower()
+    assert data["error"]["code"] == "INVALID_AUDIO_FORMAT"
 
 
 @pytest.mark.anyio
@@ -164,12 +339,13 @@ async def test_reject_oversized_file(client: AsyncClient, monkeypatch: pytest.Mo
     assert response.status_code == 413
     data = response.json()
     assert "exceeds" in data["detail"].lower()
+    assert data["error"]["code"] == "FILE_TOO_LARGE"
 
 
 @pytest.mark.anyio
 async def test_e2e_synthetic_wav_chord_and_key_detection(client: AsyncClient) -> None:
     """End-to-end verification: generate a synthetic C Major WAV file, send to /api/v1/analyze,
-    and verify 200 OK with real LangGraph audio-engine chord and key detection output.
+    and verify 200 OK with real LangGraph audio-engine chord, key, chord_diagrams, and tablature output.
     """
     wav_bytes = create_synthetic_chord_wav_bytes(
         frequencies=[261.63, 329.63, 392.00],  # C4, E4, G4 (C Major triad)
@@ -213,3 +389,9 @@ async def test_e2e_synthetic_wav_chord_and_key_detection(client: AsyncClient) ->
     assert improvisations[0]["style"] == "Neo Soul"
     assert "Cmaj7" in improvisations[0]["suggestions"]
 
+    # Verify Phase 2 chord_diagrams and tablature on real audio-engine output
+    assert len(data["chord_diagrams"]) >= 1
+    assert data["chord_diagrams"][0]["chord"] == "C"
+    assert len(data["chord_diagrams"][0]["frets"]) == 6
+    assert len(data["tablature"]["measures"]) >= 1
+    assert len(data["tablature"]["ascii_tab"].splitlines()) == 6

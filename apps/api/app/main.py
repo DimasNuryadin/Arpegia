@@ -1,12 +1,15 @@
 """Arpegia FastAPI Gateway Entrypoint.
 
 Exposes REST endpoints for audio management, analysis orchestration,
-and guitar intelligence pipelines.
+and guitar intelligence pipelines on Port 8000.
 """
 
 from typing import Any, Dict
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.v1 import api_v1_router
@@ -32,8 +35,76 @@ app.add_middleware(
 )
 
 
+def _resolve_error_code(status_code: int, message: str) -> str:
+    """Map HTTP status code and message to canonical error codes from docs/api-contract.md."""
+    msg_lower = message.lower()
+    if status_code == status.HTTP_404_NOT_FOUND:
+        return "JOB_NOT_FOUND"
+    if status_code == status.HTTP_413_CONTENT_TOO_LARGE:
+        return "FILE_TOO_LARGE"
+    if status_code == status.HTTP_400_BAD_REQUEST:
+        if "format" in msg_lower or "mime" in msg_lower or "filename" in msg_lower:
+            return "INVALID_AUDIO_FORMAT"
+        return "INVALID_TAB_NOTE"
+    if status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
+        return "VALIDATION_ERROR"
+    return "INTERNAL_ERROR"
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    """Render HTTPExceptions using the standard ErrorEnvelope while preserving 'detail'."""
+    if isinstance(exc.detail, dict):
+        code = str(exc.detail.get("code", _resolve_error_code(exc.status_code, "")))
+        message = str(exc.detail.get("message", "Request error."))
+        details = exc.detail.get("details")
+    else:
+        message = str(exc.detail)
+        code = _resolve_error_code(exc.status_code, message)
+        details = None
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": message,
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details,
+            },
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Render Pydantic/FastAPI validation errors using the standard ErrorEnvelope."""
+    errors = jsonable_encoder(exc.errors())
+    summary_parts = []
+    for err in errors:
+        loc = ".".join(str(part) for part in err.get("loc", []) if part != "body")
+        msg = err.get("msg", "Invalid value")
+        summary_parts.append(f"{loc}: {msg}" if loc else msg)
+    message = "; ".join(summary_parts) if summary_parts else "Validation error."
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": message,
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": message,
+                "details": errors,
+            },
+        },
+    )
+
+
 class HealthResponse(BaseModel):
     """Health check response payload."""
+
     status: str
     service: str
     version: str
