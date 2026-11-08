@@ -1,30 +1,47 @@
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Navbar } from "../components/Navbar";
 import { AudioUpload } from "../components/AudioUpload";
 import { MetadataCard } from "../components/MetadataCard";
 import { AudioPlayerTimeline } from "../components/AudioPlayerTimeline";
+import { TablatureViewer } from "../components/TablatureViewer";
+import { ChordVoicingDiagram } from "../components/ChordVoicingDiagram";
 import { ImprovisationPanel } from "../components/ImprovisationPanel";
 import { GuitarFretboard } from "../components/GuitarFretboard";
 import {
   AnalysisResponse,
   ChordData,
+  TablatureUpdateRequest,
   UploadProgressState,
 } from "../types";
 import { MOCK_ANALYSIS_RESPONSE, PRESET_TRACKS } from "../lib/mock-data";
+import { applyTablatureUpdate } from "../lib/tab-utils";
 import { api } from "../lib/api";
 import { Sparkles } from "lucide-react";
 
 export default function Home() {
-  // Application State (Default to Live API so uploads hit http://localhost:8000/api/v1/analyze)
-  const [mockMode, setMockMode] = useState<boolean>(false);
+  // Application State (Supports NEXT_PUBLIC_USE_MOCK=true or UI toggle; defaults to Live API http://localhost:8000/api/v1/analyze)
+  const [mockMode, setMockMode] = useState<boolean>(
+    process.env.NEXT_PUBLIC_USE_MOCK === "true"
+  );
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [analysisData, setAnalysisData] =
     useState<AnalysisResponse>(MOCK_ANALYSIS_RESPONSE);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [activeChord, setActiveChord] = useState<ChordData | null>(null);
+  const [activeChord, setActiveChord] = useState<ChordData | null>(
+    MOCK_ANALYSIS_RESPONSE.chords[0] || null
+  );
   const [selectedVoicingChord, setSelectedVoicingChord] = useState<string>("G");
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+
+  // Synchronized Playback Time & Seek State between AudioPlayerTimeline and TablatureViewer
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [seekRequest, setSeekRequest] = useState<{
+    time: number;
+    seq: number;
+  } | null>(null);
 
   // Upload & Inference Progress State
   const [uploadState, setUploadState] = useState<UploadProgressState>({
@@ -33,6 +50,19 @@ export default function Home() {
     stage: "idle",
   });
 
+  // Sync HTML root class for Light / Dark Mode
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const html = document.documentElement;
+    if (theme === "light") {
+      html.classList.remove("dark");
+      html.classList.add("light");
+    } else {
+      html.classList.remove("light");
+      html.classList.add("dark");
+    }
+  }, [theme]);
+
   // Calculate average AI confidence
   const averageConfidence = useMemo(() => {
     if (!analysisData.chords || analysisData.chords.length === 0) return 0.92;
@@ -40,7 +70,7 @@ export default function Home() {
     return sum / analysisData.chords.length;
   }, [analysisData.chords]);
 
-  // Handle file selection and analysis
+  // Handle file selection and analysis (POST /api/v1/analyze)
   const handleFileSelected = async (file: File) => {
     setUploadedFile(file);
     setUploadState({
@@ -74,7 +104,7 @@ export default function Home() {
         stage: "completed",
       });
       setStatusNotice(
-        `Successfully analyzed "${file.name}" with ${response.chords.length} chord segments!`
+        `Analyzed "${file.name}": ${response.chords.length} chords, ${response.chord_diagrams.length} voicing diagrams & ${response.tablature.measures.length} tab measures!`
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
@@ -87,6 +117,29 @@ export default function Home() {
       setStatusNotice(`Analysis error: ${msg}`);
     }
   };
+
+  // Handle Interactive Tablature Edit (PUT /api/v1/analyze/{job_id}/tablature)
+  const handleUpdateTablature = useCallback(
+    async (payload: TablatureUpdateRequest) => {
+      // 1. Immediate optimistic UI update
+      setAnalysisData((prev) => ({
+        ...prev,
+        tablature: applyTablatureUpdate(prev.tablature, payload),
+      }));
+
+      // 2. Persist to backend API (or local fallback if offline / mock mode)
+      const result = await api.updateTablature(
+        analysisData.job_id,
+        payload,
+        analysisData,
+        mockMode
+      );
+
+      setAnalysisData(result.analysis);
+      setStatusNotice(result.notice);
+    },
+    [analysisData, mockMode]
+  );
 
   // Reset to empty state
   const handleReset = () => {
@@ -107,10 +160,12 @@ export default function Home() {
       setActiveChord(preset.chords[0]);
       setSelectedVoicingChord(preset.chords[0].chord);
     }
-    setStatusNotice(`Loaded preset: "${preset.metadata.filename}"`);
+    setStatusNotice(
+      `Loaded Phase 2 preset: "${preset.metadata.filename}" (${preset.tablature.measures.length} tab measures)`
+    );
   };
 
-  // Sync active chord to fretboard visualizer
+  // Sync active chord to SVG Chord Voicing Diagram & Fretboard Visualizer
   const handleActiveChordChange = useCallback((chord: ChordData | null) => {
     setActiveChord(chord);
     if (chord) {
@@ -118,8 +173,27 @@ export default function Home() {
     }
   }, []);
 
+  const handlePlaybackTimeChange = useCallback(
+    (time: number, playing: boolean) => {
+      setCurrentTime(time);
+      setIsPlaying(playing);
+    },
+    []
+  );
+
+  const handleSeekFromTab = useCallback((time: number) => {
+    setCurrentTime(time);
+    setSeekRequest((prev) => ({ time, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+
   return (
-    <div className="min-h-screen bg-[#090b10] text-slate-100 flex flex-col font-sans">
+    <div
+      className={`min-h-screen flex flex-col font-sans transition-colors ${
+        theme === "light"
+          ? "theme-light bg-slate-100 text-slate-900"
+          : "theme-dark bg-[#090b10] text-slate-100"
+      }`}
+    >
       {/* Studio Header */}
       <Navbar
         mockMode={mockMode}
@@ -127,12 +201,16 @@ export default function Home() {
           setMockMode(val);
           setStatusNotice(
             val
-              ? "Switched to Mock Engine (High-fidelity studio simulation)"
+              ? "Switched to Mock Engine (High-fidelity Phase 2 studio simulation)"
               : `Switched to Live API (${api.getApiUrl()})`
           );
         }}
         onLoadPreset={handleLoadPreset}
         isProcessing={uploadState.isUploading}
+        theme={theme}
+        onToggleTheme={() =>
+          setTheme((prev) => (prev === "dark" ? "light" : "dark"))
+        }
       />
 
       {/* Main Studio Workspace */}
@@ -146,7 +224,7 @@ export default function Home() {
             </div>
             <button
               onClick={() => setStatusNotice(null)}
-              className="text-amber-400/80 hover:text-white"
+              className="text-amber-400/80 hover:text-white cursor-pointer"
             >
               ✕
             </button>
@@ -172,7 +250,7 @@ export default function Home() {
             metadata={analysisData.metadata}
             chordsCount={analysisData.chords.length}
             averageConfidence={averageConfidence}
-            isPlaying={true}
+            isPlaying={isPlaying}
           />
         </section>
 
@@ -188,12 +266,27 @@ export default function Home() {
               setActiveChord(chord);
               setSelectedVoicingChord(chord.chord);
             }}
+            onPlaybackTimeChange={handlePlaybackTimeChange}
+            seekRequest={seekRequest}
           />
         </section>
 
-        {/* Two-Column Studio Lower Section: Improvisation Panel + Fretboard Visualizer */}
+        {/* 4. Phase 2: Interactive 6-String Guitar Tablature Viewer, Editor & Web Audio Tab Synth */}
+        <section aria-label="Interactive Guitar Tablature Viewer and Editor">
+          <TablatureViewer
+            jobId={analysisData.job_id}
+            filename={analysisData.metadata.filename}
+            tablature={analysisData.tablature}
+            currentTime={currentTime}
+            isMainPlayerPlaying={isPlaying}
+            onSeekMainPlayer={handleSeekFromTab}
+            onUpdateTablature={handleUpdateTablature}
+          />
+        </section>
+
+        {/* 5. Two-Column Studio Section: Improvisation Panel + SVG Chord Voicing Diagram */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 4. Basic Chord Improvisation Panel (Takes 2 cols) */}
+          {/* Chord Improvisation Panel (Takes 2 cols) */}
           <section
             className="lg:col-span-2"
             aria-label="Chord Improvisation Panel"
@@ -201,15 +294,32 @@ export default function Home() {
             <ImprovisationPanel
               improvisations={analysisData.improvisations}
               activeChord={activeChord}
-              onSelectVoicingForDiagram={(chord) => setSelectedVoicingChord(chord)}
+              onSelectVoicingForDiagram={(chord) =>
+                setSelectedVoicingChord(chord)
+              }
             />
           </section>
 
-          {/* 5. Interactive Guitar Fretboard Visualizer (Takes 1 col) */}
-          <section className="lg:col-span-1" aria-label="Fretboard Diagram">
-            <GuitarFretboard chordName={selectedVoicingChord || "G"} />
+          {/* Phase 2 SVG Guitar Chord Voicing Diagram (Takes 1 col) */}
+          <section
+            className="lg:col-span-1"
+            aria-label="SVG Guitar Chord Voicing Diagram"
+          >
+            <ChordVoicingDiagram
+              selectedChordName={selectedVoicingChord || "G"}
+              activeChordName={activeChord?.chord}
+              chordDiagrams={analysisData.chord_diagrams}
+              tuning={analysisData.tablature?.tuning}
+              capo={analysisData.tablature?.capo}
+              onSelectChord={(chord) => setSelectedVoicingChord(chord)}
+            />
           </section>
         </div>
+
+        {/* 6. Full 12-Fret Horizontal Guitar Fretboard Neck Visualizer */}
+        <section aria-label="Full Guitar Fretboard Neck Visualizer">
+          <GuitarFretboard chordName={selectedVoicingChord || "G"} />
+        </section>
       </main>
 
       {/* Studio Footer */}
@@ -217,9 +327,9 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-500">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Arpegia Platform • Phase 1 MVP</span>
+            <span>Arpegia Platform • Phase 2 Guitar Intelligence</span>
             <span className="text-slate-700">|</span>
-            <span>App Router • TypeScript • Tailwind CSS</span>
+            <span>Tablature Studio • SVG Chord Voicings • Web Audio Synth</span>
           </div>
 
           <div className="flex items-center gap-3">
