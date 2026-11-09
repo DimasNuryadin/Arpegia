@@ -1,4 +1,4 @@
-"""LangGraph orchestration pipeline for audio analysis, guitar intelligence, chord voicings, and tablature transcription."""
+"""LangGraph orchestration pipeline for audio analysis, guitar intelligence, chord voicings, tablature transcription, AI style arrangements, and multi-format symbolic exports."""
 
 from typing import TypedDict, List, Dict, Any, Optional, Union, Literal
 import os
@@ -14,14 +14,31 @@ from .chord_detector import ChordDetector
 from .improvisation_agent import ImprovisationAgent
 from .chord_voicings import ChordVoicingGenerator
 from .tab_transcriber import TabTranscriber
+from .arrangement_generator import ArrangementGenerator, generate_arrangement
+from .exporters import (
+    export_to_midi_bytes,
+    export_to_musicxml,
+    export_to_pdf_bytes,
+    export_to_ascii,
+    export_arrangement,
+)
 
 
 # ============================================================================
-# Pydantic Output Validation Models (Phase 1 & Phase 2 Schema Lock)
+# Pydantic Output Validation Models (Phase 1, Phase 2 & Phase 3 Schema Lock)
 # ============================================================================
 
 TabTechniqueType = Literal["normal", "hammer-on", "pull-off", "slide", "bend"]
-TabDifficultyType = Literal["Beginner", "Intermediate", "Advanced"]
+DifficultyLevel = Literal["Beginner", "Intermediate", "Advanced"]
+TabDifficultyType = DifficultyLevel
+ArrangementStyle = Literal[
+    "Fingerstyle",
+    "Neo Soul",
+    "Jazz Chord Melody",
+    "Acoustic Strumming",
+]
+ExportFormat = Literal["midi", "musicxml", "ascii", "pdf"]
+VoiceRole = Literal["melody", "bass", "harmony", "percussive"]
 
 
 class AudioMetadata(BaseModel):
@@ -76,6 +93,13 @@ class TabNote(BaseModel):
     technique: TabTechniqueType = Field(
         default="normal",
         description="Articulation technique ('normal', 'hammer-on', 'pull-off', 'slide', 'bend')",
+    )
+    voice: Optional[VoiceRole] = Field(
+        default="melody",
+        description=(
+            "Polyphonic voice role ('melody', 'bass', 'harmony', 'percussive') allowing "
+            "Fingerstyle separation between thumb bass notes (strings 4-6) and plucked melody/arpeggio notes (strings 1-3)"
+        ),
     )
 
 
@@ -151,8 +175,65 @@ class ChordDiagram(BaseModel):
         return v
 
 
+class ArrangementVariation(BaseModel):
+    """Complete playable guitar arrangement variation for a specific style and difficulty."""
+    model_config = ConfigDict(extra="ignore")
+
+    arrangement_id: str = Field(
+        ..., description="Unique arrangement variation identifier (e.g. 'arr-fingerstyle-default')"
+    )
+    title: str = Field(
+        ..., description="Human-readable arrangement title (e.g. 'Fingerstyle Solo Arrangement')"
+    )
+    style: ArrangementStyle = Field(
+        ...,
+        description="Arrangement style ('Fingerstyle', 'Neo Soul', 'Jazz Chord Melody', 'Acoustic Strumming')",
+    )
+    difficulty: DifficultyLevel = Field(
+        ..., description="Playability difficulty tier ('Beginner', 'Intermediate', 'Advanced')"
+    )
+    description: str = Field(
+        ...,
+        description="Summary of voice leading, bassline pattern, and chord substitutions used",
+    )
+    chords_used: List[str] = Field(
+        default_factory=list,
+        description="Sequence of reharmonized or arranged chord voicings used in this variation",
+    )
+    tablature: TablatureData = Field(
+        default_factory=TablatureData,
+        description="Complete playable 6-string tablature with measures, polyphonic voice notes, and ascii_tab",
+    )
+
+
+class ArrangementRequest(BaseModel):
+    """Request payload for generating a custom arrangement variation."""
+    model_config = ConfigDict(extra="ignore")
+
+    style: ArrangementStyle = Field(
+        ...,
+        description="Target arrangement style ('Fingerstyle', 'Neo Soul', 'Jazz Chord Melody', 'Acoustic Strumming')",
+    )
+    difficulty: DifficultyLevel = Field(
+        ...,
+        description="Target playability difficulty ('Beginner', 'Intermediate', 'Advanced')",
+    )
+    capo: int = Field(
+        default=0,
+        ge=0,
+        le=12,
+        description="Capo fret position (0 to 12, default 0)",
+    )
+    tempo_scale: float = Field(
+        default=1.0,
+        ge=0.5,
+        le=1.5,
+        description="Tempo scaling factor (0.5 to 1.5, default 1.0)",
+    )
+
+
 class AnalysisOutput(BaseModel):
-    """Strict final output schema matching Phase 1 + Phase 2 contracts."""
+    """Strict final output schema matching Phase 1 + Phase 2 + Phase 3 contracts."""
     model_config = ConfigDict(extra="ignore")
 
     metadata: AudioMetadata
@@ -160,6 +241,7 @@ class AnalysisOutput(BaseModel):
     improvisations: List[ChordImprovisation] = Field(default_factory=list)
     chord_diagrams: List[ChordDiagram] = Field(default_factory=list)
     tablature: TablatureData = Field(default_factory=TablatureData)
+    arrangements: List[ArrangementVariation] = Field(default_factory=list)
 
 
 # ============================================================================
@@ -184,6 +266,7 @@ class PipelineState(TypedDict, total=False):
     improvisations: List[Dict[str, Any]]
     chord_diagrams: List[Dict[str, Any]]
     tablature: Dict[str, Any]
+    arrangements: List[Dict[str, Any]]
     output: Dict[str, Any]
     error: Optional[str]
 
@@ -308,8 +391,46 @@ def tab_transcription_node(state: PipelineState) -> Dict[str, Any]:
     return {"tablature": tablature}
 
 
+def arrangement_generator_node(state: PipelineState) -> Dict[str, Any]:
+    """Node 7: ArrangementGeneratorNode - Synthesizes default Fingerstyle solo arrangement (Phase 3)."""
+    metadata = {
+        "filename": state.get("filename", "audio.wav"),
+        "duration": state.get("duration", 4.8),
+        "key": state.get("key", "G Major"),
+        "bpm": state.get("bpm", 120),
+        "time_signature": state.get("time_signature", "4/4"),
+    }
+    chords = state.get("chords") or []
+    base_tablature = state.get("tablature") or {}
+
+    default_fingerstyle = generate_arrangement(
+        metadata=metadata,
+        chords=chords,
+        base_tablature=base_tablature,
+        style="Fingerstyle",
+        difficulty="Intermediate",
+        capo=0,
+        tempo_scale=1.0,
+        arrangement_id="arr-fingerstyle-default",
+    )
+
+    # Also ensure chord_diagrams covers any newly reharmonized chords in the default arrangement
+    voicing_gen = ChordVoicingGenerator()
+    existing_diagrams = list(state.get("chord_diagrams") or [])
+    seen_chords = {d.get("chord") for d in existing_diagrams if d.get("chord")}
+    for c_sym in default_fingerstyle.get("chords_used", []):
+        if c_sym and c_sym not in seen_chords:
+            seen_chords.add(c_sym)
+            existing_diagrams.append(voicing_gen.get_chord_diagram(c_sym))
+
+    return {
+        "arrangements": [default_fingerstyle],
+        "chord_diagrams": existing_diagrams,
+    }
+
+
 def output_validator_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 7: OutputValidatorNode - Validates schema and compiles final payload."""
+    """Node 8: OutputValidatorNode - Validates schema and compiles final payload."""
     payload = {
         "metadata": {
             "filename": state["filename"],
@@ -322,6 +443,7 @@ def output_validator_node(state: PipelineState) -> Dict[str, Any]:
         "improvisations": state["improvisations"],
         "chord_diagrams": state.get("chord_diagrams") or [],
         "tablature": state.get("tablature") or {},
+        "arrangements": state.get("arrangements") or [],
     }
 
     # Validate strictly via Pydantic model
@@ -332,7 +454,7 @@ def output_validator_node(state: PipelineState) -> Dict[str, Any]:
 
 
 # ============================================================================
-# Graph Builder
+# Graph Builder & Direct On-Demand Helpers for apps/api
 # ============================================================================
 
 def create_orchestrator():
@@ -346,6 +468,7 @@ def create_orchestrator():
     graph.add_node("ImprovisationNode", improvisation_node)
     graph.add_node("ChordDiagramNode", chord_diagram_node)
     graph.add_node("TabTranscriptionNode", tab_transcription_node)
+    graph.add_node("ArrangementGeneratorNode", arrangement_generator_node)
     graph.add_node("OutputValidatorNode", output_validator_node)
 
     # Wire linear pipeline edges
@@ -355,7 +478,8 @@ def create_orchestrator():
     graph.add_edge("ChordDetectionNode", "ImprovisationNode")
     graph.add_edge("ImprovisationNode", "ChordDiagramNode")
     graph.add_edge("ChordDiagramNode", "TabTranscriptionNode")
-    graph.add_edge("TabTranscriptionNode", "OutputValidatorNode")
+    graph.add_edge("TabTranscriptionNode", "ArrangementGeneratorNode")
+    graph.add_edge("ArrangementGeneratorNode", "OutputValidatorNode")
     graph.add_edge("OutputValidatorNode", END)
 
     return graph.compile()
@@ -374,7 +498,7 @@ def run_pipeline(
         filename: Optional original filename to preserve in output metadata.
 
     Returns:
-        Clean, serialized dictionary matching the Phase 1 + Phase 2 output specification.
+        Clean, serialized dictionary matching the Phase 1 + Phase 2 + Phase 3 output specification.
     """
     app = create_orchestrator()
     initial_state: PipelineState = {
@@ -385,3 +509,64 @@ def run_pipeline(
         initial_state["filename"] = filename
     final_state = app.invoke(initial_state)
     return final_state["output"]
+
+
+def generate_custom_arrangement(
+    analysis_data: Dict[str, Any],
+    style: str = "Fingerstyle",
+    difficulty: str = "Intermediate",
+    capo: int = 0,
+    tempo_scale: float = 1.0,
+) -> Dict[str, Any]:
+    """Direct helper for `apps/api` (`POST /api/v1/analyze/{job_id}/arrange`) to generate
+
+    and validate a custom style/difficulty `ArrangementVariation` from an existing job dict.
+    """
+    metadata = analysis_data.get("metadata") or {}
+    chords = analysis_data.get("chords") or []
+    base_tablature = analysis_data.get("tablature") or {}
+
+    raw_variation = generate_arrangement(
+        metadata=metadata,
+        chords=chords,
+        base_tablature=base_tablature,
+        style=style,
+        difficulty=difficulty,
+        capo=capo,
+        tempo_scale=tempo_scale,
+    )
+    validated = ArrangementVariation.model_validate(raw_variation)
+    return validated.model_dump()
+
+
+def export_job_score(
+    analysis_data: Dict[str, Any],
+    export_format: str,
+    arrangement_id: Optional[str] = None,
+) -> Union[bytes, str]:
+    """Direct helper for `apps/api` (`GET /api/v1/analyze/{job_id}/export`) to export
+
+    a job's primary tablature or a specific `arrangement_id` in `midi`, `musicxml`, `ascii`, or `pdf`.
+    """
+    metadata = analysis_data.get("metadata") or {}
+    chords = analysis_data.get("chords") or []
+
+    target_tab_or_arr: Dict[str, Any]
+    if arrangement_id:
+        arrangements = analysis_data.get("arrangements") or []
+        matched = next(
+            (a for a in arrangements if a.get("arrangement_id") == arrangement_id),
+            None,
+        )
+        if matched is None:
+            raise KeyError(f"Arrangement '{arrangement_id}' not found on job.")
+        target_tab_or_arr = matched
+    else:
+        target_tab_or_arr = analysis_data.get("tablature") or {}
+
+    return export_arrangement(
+        export_format=export_format,
+        metadata=metadata,
+        chords=chords,
+        tablature=target_tab_or_arr,
+    )

@@ -606,6 +606,11 @@ class TabTranscriber:
         # 3. Articulation technique detection
         annotated_notes = self.detect_techniques(fretted_notes)
 
+        # 3b. Assign default polyphonic voice role ('bass' on strings 5-6, 'melody' on strings 1-4)
+        for n in annotated_notes:
+            if not n.get("voice"):
+                n["voice"] = "bass" if int(n.get("string", 1)) >= 5 else "melody"
+
         # 4. Measure segmentation
         measures = self.segment_into_measures(
             notes=annotated_notes,
