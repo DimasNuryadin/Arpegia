@@ -2,10 +2,15 @@ import {
   AnalysisResponse,
   ArrangementRequest,
   ArrangementVariation,
+  CANONICAL_PIPELINE_STAGES,
   DEFAULT_GUITAR_TUNING,
   ExportFormat,
+  JobProgressEvent,
+  PipelineStage,
+  PipelineStepInfo,
   TablatureData,
   TablatureUpdateRequest,
+  TransportType,
 } from "../types";
 import {
   buildMockArrangementVariation,
@@ -20,11 +25,12 @@ import {
 } from "./export-utils";
 import { applyTablatureUpdate, resolveNoteVoice } from "./tab-utils";
 
-const DEFAULT_API_URL = "http://localhost:8000/api/v1/analyze";
-
 export interface AnalyzeOptions {
-  onProgress?: (percent: number, stageText: string) => void;
+  onProgress?: (percent: number, stageText: string, event?: JobProgressEvent) => void;
+  onProgressEvent?: (event: JobProgressEvent) => void;
+  onTransportChange?: (transport: TransportType) => void;
   mockMode?: boolean;
+  pollIntervalMs?: number;
 }
 
 export interface UpdateTablatureResult {
@@ -46,22 +52,42 @@ export interface ExportTablatureResult {
 }
 
 export class ArpegiaApiClient {
-  private apiUrl: string;
+  private httpBaseUrl: string;
+  private analyzeUrl: string;
+  private wsBaseUrl: string;
 
   constructor() {
-    const rawUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-    if (rawUrl) {
-      const normalized = rawUrl.replace(/\/+$/, "");
-      this.apiUrl = normalized.endsWith("/api/v1/analyze")
-        ? normalized
-        : `${normalized}/api/v1/analyze`;
+    const rawApi = process.env.NEXT_PUBLIC_API_URL?.trim() || "http://localhost:8000";
+    const cleanApi = rawApi.replace(/\/+$/, "");
+    this.httpBaseUrl = cleanApi.replace(/\/api\/v1\/analyze$/, "");
+    this.analyzeUrl = `${this.httpBaseUrl}/api/v1/analyze`;
+
+    const rawWs = process.env.NEXT_PUBLIC_WS_URL?.trim();
+    if (rawWs) {
+      this.wsBaseUrl = rawWs.replace(/\/+$/, "");
     } else {
-      this.apiUrl = DEFAULT_API_URL;
+      this.wsBaseUrl = this.httpBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
     }
   }
 
   getApiUrl(): string {
-    return this.apiUrl;
+    return this.analyzeUrl;
+  }
+
+  getHttpBaseUrl(): string {
+    return this.httpBaseUrl;
+  }
+
+  getWsBaseUrl(): string {
+    return this.wsBaseUrl;
+  }
+
+  getWsUrl(jobId: string): string {
+    return `${this.wsBaseUrl}/ws/analyze/${encodeURIComponent(jobId)}`;
+  }
+
+  getProgressUrl(jobId: string): string {
+    return `${this.analyzeUrl}/${encodeURIComponent(jobId)}/progress`;
   }
 
   /**
@@ -87,9 +113,9 @@ export class ArpegiaApiClient {
   }
 
   /**
-   * Ensures every AnalysisResponse contains valid Phase 2 & Phase 3 chord_diagrams, tablature, and arrangements
+   * Ensures every AnalysisResponse contains valid Phase 2, Phase 3 & Phase 4 fields
    */
-  private normalizeResponse(data: AnalysisResponse): AnalysisResponse {
+  public normalizeResponse(data: AnalysisResponse): AnalysisResponse {
     const chord_diagrams =
       data.chord_diagrams && data.chord_diagrams.length > 0
         ? data.chord_diagrams
@@ -125,7 +151,66 @@ export class ArpegiaApiClient {
   }
 
   /**
-   * POST /api/v1/analyze — Analyze audio file with backend API or realistic mock fallback
+   * Helper to construct initial progress frame
+   */
+  public buildInitialProgressEvent(
+    jobId: string,
+    message = "Job queued for analysis..."
+  ): JobProgressEvent {
+    const steps: PipelineStepInfo[] = CANONICAL_PIPELINE_STAGES.map((s, idx) => ({
+      stage: s.stage,
+      label: s.label,
+      status: idx === 0 ? "in_progress" : "pending",
+      progress_percent: idx === 0 ? 10 : 0,
+      detail: idx === 0 ? "Initializing Demucs source separation..." : null,
+    }));
+
+    return {
+      event: "job.progress",
+      job_id: jobId,
+      status: "processing",
+      current_stage: "separating_stems",
+      overall_percent: 5,
+      message,
+      steps,
+      updated_at: new Date().toISOString(),
+      result: null,
+      error: null,
+    };
+  }
+
+  /**
+   * Helper to construct completed progress frame
+   */
+  public buildCompletedProgressEvent(
+    jobId: string,
+    result: AnalysisResponse
+  ): JobProgressEvent {
+    const steps: PipelineStepInfo[] = CANONICAL_PIPELINE_STAGES.map((s) => ({
+      stage: s.stage,
+      label: s.label,
+      status: "completed",
+      progress_percent: 100,
+      detail: s.description,
+    }));
+
+    return {
+      event: "job.completed",
+      job_id: jobId,
+      status: "completed",
+      current_stage: "completed",
+      overall_percent: 100,
+      message: "Analysis completed successfully!",
+      steps,
+      updated_at: new Date().toISOString(),
+      result,
+      error: null,
+    };
+  }
+
+  /**
+   * POST /api/v1/analyze?async_mode=true
+   * Phase 4 Dual-Transport Audio Analysis (WebSocket + HTTP Polling Fallback)
    */
   async analyzeAudio(
     file: File,
@@ -135,19 +220,22 @@ export class ArpegiaApiClient {
     const isMock = options?.mockMode ?? envMock;
 
     if (isMock) {
-      return this.simulateMockAnalysis(file, options?.onProgress);
+      options?.onTransportChange?.("mock");
+      return this.simulateMockPipeline(file, options);
     }
 
     try {
-      options?.onProgress?.(10, "Uploading audio to neural backend...");
+      options?.onProgress?.(5, "Uploading audio to neural backend...");
 
       const formData = new FormData();
       formData.append("file", file);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for DSP & LangGraph pipeline
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-      const response = await fetch(this.apiUrl, {
+      // Async upload request targeting POST /api/v1/analyze?async_mode=true
+      const uploadUrl = `${this.analyzeUrl}?async_mode=true`;
+      const response = await fetch(uploadUrl, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -156,19 +244,64 @@ export class ArpegiaApiClient {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(
-          `Backend returned ${response.status}: ${response.statusText}`
-        );
+        let errDetail = `${response.status}: ${response.statusText}`;
+        try {
+          const errJson = await response.json();
+          if (errJson?.error?.message) {
+            errDetail = errJson.error.message;
+          } else if (errJson?.detail) {
+            errDetail =
+              typeof errJson.detail === "string"
+                ? errJson.detail
+                : JSON.stringify(errJson.detail);
+          }
+        } catch {
+          // ignore parse error
+        }
+        throw new Error(`Backend returned ${errDetail}`);
       }
 
+      const data = await response.json();
+
+      // Graceful compatibility check: if backend answered synchronously with complete analysis
+      if (
+        data.status === "completed" &&
+        data.metadata &&
+        data.chords &&
+        Array.isArray(data.chords)
+      ) {
+        options?.onTransportChange?.("sync");
+        const normalized = this.normalizeResponse(data as AnalysisResponse);
+        const syncEvent = this.buildCompletedProgressEvent(
+          normalized.job_id || `job_${Date.now()}`,
+          normalized
+        );
+        options?.onProgressEvent?.(syncEvent);
+        options?.onProgress?.(100, "Analysis complete!", syncEvent);
+        return normalized;
+      }
+
+      // Asynchronous streaming mode: parse job_id and initial progress
+      const jobId = data.job_id;
+      if (!jobId) {
+        throw new Error("Invalid async response from backend: missing job_id");
+      }
+
+      const initialEvent: JobProgressEvent = data.steps
+        ? (data as JobProgressEvent)
+        : this.buildInitialProgressEvent(
+            jobId,
+            data.message || "Job accepted for processing"
+          );
+
+      options?.onProgressEvent?.(initialEvent);
       options?.onProgress?.(
-        80,
-        "Decoding chords, voicings & guitar tablature..."
+        initialEvent.overall_percent,
+        initialEvent.message,
+        initialEvent
       );
-      const rawData: AnalysisResponse = await response.json();
-      const data = this.normalizeResponse(rawData);
-      options?.onProgress?.(100, "Analysis complete!");
-      return data;
+
+      return await this.trackJobProgress(jobId, initialEvent, options);
     } catch (err: unknown) {
       const errorMsg =
         err instanceof Error ? err.message : "Failed to connect to backend";
@@ -177,12 +310,239 @@ export class ArpegiaApiClient {
         err
       );
 
-      return this.simulateMockAnalysis(
+      options?.onTransportChange?.("mock");
+      return this.simulateMockPipeline(
         file,
-        options?.onProgress,
+        options,
         `Backend offline (${errorMsg}). Used AI Studio Simulation.`
       );
     }
+  }
+
+  /**
+   * Dual-Transport Real-Time Progress Streamer:
+   * 1. Attempts WebSocket connection to ws://localhost:8000/ws/analyze/{job_id}
+   * 2. Automatically falls back to HTTP Polling GET /api/v1/analyze/{job_id}/progress every 800ms
+   */
+  async trackJobProgress(
+    jobId: string,
+    initialEvent: JobProgressEvent | null,
+    options?: AnalyzeOptions
+  ): Promise<AnalysisResponse> {
+    const pollInterval =
+      options?.pollIntervalMs ||
+      Number(process.env.ARPEGIA_ASYNC_POLL_INTERVAL_MS) ||
+      800;
+
+    return new Promise<AnalysisResponse>((resolve, reject) => {
+      let isFinished = false;
+      let pollingIntervalId: ReturnType<typeof setInterval> | null = null;
+      let ws: WebSocket | null = null;
+      let pollFailures = 0;
+
+      const cleanup = () => {
+        if (pollingIntervalId) {
+          clearInterval(pollingIntervalId);
+          pollingIntervalId = null;
+        }
+        if (ws) {
+          try {
+            ws.onopen = null;
+            ws.onmessage = null;
+            ws.onerror = null;
+            ws.onclose = null;
+            if (
+              ws.readyState === WebSocket.OPEN ||
+              ws.readyState === WebSocket.CONNECTING
+            ) {
+              ws.close();
+            }
+          } catch {
+            // ignore socket close errors
+          }
+          ws = null;
+        }
+      };
+
+      const handleSuccess = async (event: JobProgressEvent) => {
+        if (isFinished) return;
+        isFinished = true;
+        cleanup();
+
+        options?.onProgressEvent?.(event);
+        options?.onProgress?.(100, event.message || "Analysis complete!", event);
+
+        if (event.result) {
+          resolve(this.normalizeResponse(event.result));
+        } else {
+          try {
+            const fullData = await this.getAnalysisJob(jobId);
+            resolve(this.normalizeResponse(fullData));
+          } catch (fetchErr) {
+            reject(fetchErr);
+          }
+        }
+      };
+
+      const handleFailure = (event: JobProgressEvent) => {
+        if (isFinished) return;
+        isFinished = true;
+        cleanup();
+
+        options?.onProgressEvent?.(event);
+        options?.onProgress?.(
+          event.overall_percent || 0,
+          event.message || "Analysis failed",
+          event
+        );
+
+        const errorMsg =
+          typeof event.error === "object" &&
+          event.error !== null &&
+          "message" in event.error
+            ? String((event.error as { message: unknown }).message)
+            : event.message || "Pipeline processing failed";
+        reject(new Error(errorMsg));
+      };
+
+      const handleEventFrame = (event: JobProgressEvent) => {
+        if (isFinished) return;
+
+        options?.onProgressEvent?.(event);
+        options?.onProgress?.(event.overall_percent, event.message, event);
+
+        if (event.status === "completed" || event.event === "job.completed") {
+          handleSuccess(event);
+        } else if (event.status === "failed" || event.event === "job.failed") {
+          handleFailure(event);
+        }
+      };
+
+      const startHttpPolling = () => {
+        if (isFinished || pollingIntervalId) return;
+
+        console.info(
+          `[Arpegia API] Initiating HTTP polling fallback for job "${jobId}" (interval: ${pollInterval}ms)`
+        );
+        options?.onTransportChange?.("polling");
+
+        const poll = async () => {
+          if (isFinished) return;
+          try {
+            const res = await fetch(this.getProgressUrl(jobId));
+            if (!res.ok) {
+              pollFailures++;
+              if (pollFailures > 12) {
+                throw new Error(
+                  `Polling failed with HTTP ${res.status}: ${res.statusText}`
+                );
+              }
+              return;
+            }
+            pollFailures = 0;
+            const frame: JobProgressEvent = await res.json();
+            handleEventFrame(frame);
+          } catch (pollErr: unknown) {
+            pollFailures++;
+            if (pollFailures > 12 && !isFinished) {
+              isFinished = true;
+              cleanup();
+              reject(
+                pollErr instanceof Error
+                  ? pollErr
+                  : new Error("HTTP polling fallback failed repeatedly")
+              );
+            }
+          }
+        };
+
+        // Poll immediately then on scheduled interval
+        poll();
+        pollingIntervalId = setInterval(poll, pollInterval);
+      };
+
+      // Attempt WebSocket transport first
+      const wsUrl = this.getWsUrl(jobId);
+      try {
+        if (typeof WebSocket !== "undefined") {
+          ws = new WebSocket(wsUrl);
+
+          ws.onopen = () => {
+            options?.onTransportChange?.("websocket");
+            console.info(`[Arpegia API] WebSocket connected to ${wsUrl}`);
+          };
+
+          ws.onmessage = (messageEvent) => {
+            try {
+              const frame: JobProgressEvent = JSON.parse(messageEvent.data);
+              handleEventFrame(frame);
+            } catch (jsonErr) {
+              console.warn(
+                "[Arpegia API] WebSocket frame parsing error:",
+                jsonErr
+              );
+            }
+          };
+
+          ws.onerror = (err) => {
+            console.warn(
+              "[Arpegia API] WebSocket error encountered, switching to HTTP polling:",
+              err
+            );
+            if (!isFinished) {
+              startHttpPolling();
+            }
+          };
+
+          ws.onclose = (closeEvent) => {
+            if (!isFinished) {
+              console.info(
+                `[Arpegia API] WebSocket closed (code ${closeEvent.code}), switching to HTTP polling.`
+              );
+              startHttpPolling();
+            }
+          };
+        } else {
+          startHttpPolling();
+        }
+      } catch (wsErr) {
+        console.warn(
+          "[Arpegia API] Failed to instantiate WebSocket, falling back to HTTP polling:",
+          wsErr
+        );
+        startHttpPolling();
+      }
+
+      // Safety timeout: abort if pipeline takes longer than 180 seconds
+      setTimeout(() => {
+        if (!isFinished) {
+          isFinished = true;
+          cleanup();
+          reject(
+            new Error(
+              `Pipeline analysis timed out after 180 seconds for job ${jobId}`
+            )
+          );
+        }
+      }, 180000);
+    });
+  }
+
+  /**
+   * GET /api/v1/analyze/{job_id}/progress — Poll Pipeline Progress (HTTP Fallback)
+   */
+  async pollJobProgress(jobId: string): Promise<JobProgressEvent> {
+    const response = await fetch(this.getProgressUrl(jobId), {
+      method: "GET",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch job progress (${response.status}: ${response.statusText})`
+      );
+    }
+
+    return response.json();
   }
 
   /**
@@ -190,7 +550,7 @@ export class ArpegiaApiClient {
    */
   async getAnalysisJob(jobId: string): Promise<AnalysisResponse> {
     const response = await fetch(
-      `${this.apiUrl}/${encodeURIComponent(jobId)}`,
+      `${this.analyzeUrl}/${encodeURIComponent(jobId)}`,
       {
         method: "GET",
       }
@@ -208,7 +568,6 @@ export class ArpegiaApiClient {
 
   /**
    * PUT /api/v1/analyze/{job_id}/tablature — Update Tablature & Regenerate ASCII Tab
-   * Performs optimistic local computation first and persists to backend when available.
    */
   async updateTablature(
     jobId: string,
@@ -216,7 +575,6 @@ export class ArpegiaApiClient {
     currentAnalysis: AnalysisResponse,
     mockMode = false
   ): Promise<UpdateTablatureResult> {
-    // 1. Optimistic local recomputation of midi, note_name, and 6-line ascii_tab
     const optimisticTablature = applyTablatureUpdate(
       currentAnalysis.tablature,
       payload
@@ -238,7 +596,9 @@ export class ArpegiaApiClient {
     }
 
     try {
-      const endpoint = `${this.apiUrl}/${encodeURIComponent(jobId)}/tablature`;
+      const endpoint = `${this.analyzeUrl}/${encodeURIComponent(
+        jobId
+      )}/tablature`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -261,7 +621,7 @@ export class ArpegiaApiClient {
             errDetail = errJson.error.message;
           }
         } catch {
-          // ignore JSON parse error
+          // ignore
         }
         throw new Error(errDetail);
       }
@@ -273,8 +633,7 @@ export class ArpegiaApiClient {
         notice: `Saved tablature edits to backend (PUT /api/v1/analyze/${jobId}/tablature).`,
       };
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "Backend unreachable";
+      const msg = err instanceof Error ? err.message : "Backend unreachable";
       console.warn(
         `[Arpegia API] PUT /tablature fallback to optimistic state (${msg}).`
       );
@@ -313,7 +672,9 @@ export class ArpegiaApiClient {
     }
 
     try {
-      const endpoint = `${this.apiUrl}/${encodeURIComponent(jobId)}/arrange`;
+      const endpoint = `${this.analyzeUrl}/${encodeURIComponent(
+        jobId
+      )}/arrange`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000);
 
@@ -341,7 +702,7 @@ export class ArpegiaApiClient {
             errDetail = errJson.error.message;
           }
         } catch {
-          // ignore JSON parse error
+          // ignore
         }
         throw new Error(errDetail);
       }
@@ -372,7 +733,6 @@ export class ArpegiaApiClient {
 
   /**
    * GET /api/v1/analyze/{job_id}/export?format=<fmt>&arrangement_id=<id>
-   * Downloads MIDI (.mid), MusicXML (.musicxml), ASCII (.txt), or PDF (.pdf) with client-side fallback.
    */
   async exportTablature(params: {
     jobId: string;
@@ -430,7 +790,7 @@ export class ArpegiaApiClient {
       if (arrangementId) {
         query.set("arrangement_id", arrangementId);
       }
-      const endpoint = `${this.apiUrl}/${encodeURIComponent(
+      const endpoint = `${this.analyzeUrl}/${encodeURIComponent(
         jobId
       )}/export?${query.toString()}`;
 
@@ -451,7 +811,6 @@ export class ArpegiaApiClient {
       const blob = await response.blob();
       const spec = getExportFormatSpec(format);
 
-      // Parse filename from Content-Disposition if available
       const disposition = response.headers.get("Content-Disposition") || "";
       const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
       const filename =
@@ -473,38 +832,157 @@ export class ArpegiaApiClient {
   }
 
   /**
-   * Simulates high-fidelity AI inference pipeline with progress callbacks
+   * Phase 4: Simulates a realistic step-by-step animated progression through all 5 PipelineStepInfo stages
+   * (0% -> 25% -> 40% -> 60% -> 85% -> 100% over ~2.5 seconds).
    */
-  private async simulateMockAnalysis(
+  public async simulateMockPipeline(
     file: File,
-    onProgress?: (percent: number, stageText: string) => void,
+    options?: AnalyzeOptions,
     notice?: string
   ): Promise<AnalysisResponse> {
-    const steps = [
-      { progress: 15, text: "Reading audio buffer & sample rate..." },
-      { progress: 35, text: "Running stem demixing & guitar isolation..." },
-      { progress: 60, text: "Extracting chroma vectors & pitch detection..." },
+    const jobId = `job_sim_${Date.now()}`;
+    const stages = [
       {
-        progress: 80,
-        text: "Mapping biomechanical fretboard tablature & chord voicings...",
+        stage: "separating_stems" as PipelineStage,
+        overallPercent: 25,
+        stepPercent: 100,
+        message: "Separating audio stems (Demucs)...",
+        detail: "Isolating guitar & bass tracks with Demucs...",
       },
-      { progress: 95, text: "Generating style-based improvisations..." },
-      { progress: 100, text: notice || "Analysis complete!" },
+      {
+        stage: "detecting_key_tempo" as PipelineStage,
+        overallPercent: 40,
+        stepPercent: 100,
+        message: "Detecting musical key & tempo...",
+        detail: "Detected G Major @ 105 BPM (confidence 0.95)",
+      },
+      {
+        stage: "detecting_chords" as PipelineStage,
+        overallPercent: 60,
+        stepPercent: 100,
+        message: "Recognizing chords & improvisations...",
+        detail: "Identified 4 harmonic chords & jazz/neo-soul voicings",
+      },
+      {
+        stage: "transcribing_tablature" as PipelineStage,
+        overallPercent: 85,
+        stepPercent: 100,
+        message: "Transcribing guitar tablature...",
+        detail: "Basic Pitch polyphonic extraction + Viterbi trellis dynamic programming",
+      },
+      {
+        stage: "generating_arrangement" as PipelineStage,
+        overallPercent: 100,
+        stepPercent: 100,
+        message: notice || "Generating fingerstyle arrangement...",
+        detail: "Synthesizing fingerstyle solo arrangement with alternating thumb bass",
+      },
     ];
 
-    for (const step of steps) {
-      onProgress?.(step.progress, step.text);
-      await new Promise((resolve) => setTimeout(resolve, 260));
+    // Initial 0% snapshot
+    const initialSteps: PipelineStepInfo[] = CANONICAL_PIPELINE_STAGES.map(
+      (s, idx) => ({
+        stage: s.stage,
+        label: s.label,
+        status: idx === 0 ? "in_progress" : "pending",
+        progress_percent: 0,
+        detail: idx === 0 ? "Preparing Demucs audio separation..." : null,
+      })
+    );
+
+    const startEvent: JobProgressEvent = {
+      event: "job.progress",
+      job_id: jobId,
+      status: "processing",
+      current_stage: "separating_stems",
+      overall_percent: 0,
+      message: "Initializing AI pipeline...",
+      steps: initialSteps,
+      updated_at: new Date().toISOString(),
+      result: null,
+      error: null,
+    };
+
+    options?.onProgressEvent?.(startEvent);
+    options?.onProgress?.(0, startEvent.message, startEvent);
+
+    // 5 stages * 500ms = 2500ms (~2.5 seconds)
+    const delayPerStage = 500;
+
+    for (let i = 0; i < stages.length; i++) {
+      await new Promise((resolve) => setTimeout(resolve, delayPerStage));
+      const current = stages[i];
+
+      const currentSteps: PipelineStepInfo[] = CANONICAL_PIPELINE_STAGES.map(
+        (s, sIdx) => {
+          if (sIdx < i) {
+            return {
+              stage: s.stage,
+              label: s.label,
+              status: "completed",
+              progress_percent: 100,
+              detail: stages[sIdx].detail,
+            };
+          } else if (sIdx === i) {
+            return {
+              stage: s.stage,
+              label: s.label,
+              status: i === stages.length - 1 ? "completed" : "in_progress",
+              progress_percent: current.stepPercent,
+              detail: current.detail,
+            };
+          } else {
+            return {
+              stage: s.stage,
+              label: s.label,
+              status: "pending",
+              progress_percent: 0,
+              detail: null,
+            };
+          }
+        }
+      );
+
+      const isLast = i === stages.length - 1;
+      const completedResult: AnalysisResponse = {
+        ...MOCK_ANALYSIS_RESPONSE,
+        job_id: jobId,
+        metadata: {
+          ...MOCK_ANALYSIS_RESPONSE.metadata,
+          filename: file.name || "uploaded_audio.mp3",
+        },
+      };
+      const normalizedResult = this.normalizeResponse(completedResult);
+
+      const event: JobProgressEvent = {
+        event: isLast ? "job.completed" : "job.progress",
+        job_id: jobId,
+        status: isLast ? "completed" : "processing",
+        current_stage: isLast ? "completed" : current.stage,
+        overall_percent: current.overallPercent,
+        message: current.message,
+        steps: currentSteps,
+        updated_at: new Date().toISOString(),
+        result: isLast ? normalizedResult : null,
+        error: null,
+      };
+
+      options?.onProgressEvent?.(event);
+      options?.onProgress?.(current.overallPercent, current.message, event);
+
+      if (isLast) {
+        return normalizedResult;
+      }
     }
 
-    return {
+    return this.normalizeResponse({
       ...MOCK_ANALYSIS_RESPONSE,
-      job_id: `job_sim_${Date.now()}`,
+      job_id: jobId,
       metadata: {
         ...MOCK_ANALYSIS_RESPONSE.metadata,
         filename: file.name || "uploaded_audio.mp3",
       },
-    };
+    });
   }
 }
 

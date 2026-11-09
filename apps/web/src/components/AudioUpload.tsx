@@ -8,8 +8,10 @@ import {
   AlertCircle,
   Loader2,
   Sparkles,
+  Play,
 } from "lucide-react";
 import { UploadProgressState } from "../types";
+import { PipelineProgressTracker } from "./PipelineProgressTracker";
 
 interface AudioUploadProps {
   onFileSelected: (file: File) => void;
@@ -17,6 +19,7 @@ interface AudioUploadProps {
   currentFileName?: string;
   onReset: () => void;
   onLoadDemoTrack: () => void;
+  onSimulatePipeline?: () => void;
 }
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
@@ -29,10 +32,32 @@ export function AudioUpload({
   currentFileName,
   onReset,
   onLoadDemoTrack,
+  onSimulatePipeline,
 }: AudioUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // When pipeline is running, replace generic loader with studio-grade 5-stage progress tracker
+  if (uploadState.isUploading) {
+    return (
+      <div className="w-full">
+        <PipelineProgressTracker
+          progressEvent={uploadState.currentEvent}
+          overallPercent={uploadState.progress}
+          currentMessage={uploadState.errorMessage}
+          transport={uploadState.transport}
+          fileName={currentFileName}
+          isCompleted={uploadState.stage === "completed"}
+          isError={uploadState.stage === "error"}
+          errorMessage={
+            uploadState.stage === "error" ? uploadState.errorMessage : undefined
+          }
+          onCancel={onReset}
+        />
+      </div>
+    );
+  }
 
   const validateFile = (file: File): boolean => {
     setValidationError(null);
@@ -243,8 +268,21 @@ export function AudioUpload({
                   className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/20 transition-colors"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                  Load Sample Song (Instant Demo)
+                  Load Sample Song
                 </button>
+                {onSimulatePipeline && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSimulatePipeline();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition-colors cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                    Simulate 5-Stage AI Pipeline
+                  </button>
+                )}
               </div>
             </div>
           )}

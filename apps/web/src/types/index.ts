@@ -195,32 +195,80 @@ export interface ArrangementRequest {
   tempo_scale?: number; // default 1.0, range 0.5 to 1.5
 }
 
+export type PipelineStage =
+  | "queued"
+  | "separating_stems"
+  | "detecting_key_tempo"
+  | "detecting_chords"
+  | "transcribing_tablature"
+  | "generating_arrangement"
+  | "completed"
+  | "failed";
+
+export type StageStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "skipped"
+  | "failed";
+
+export interface PipelineStepInfo {
+  stage: PipelineStage;
+  label: string;
+  status: StageStatus;
+  progress_percent: number; // 0 to 100
+  detail?: string | null;
+}
+
+export type JobProgressEventType = "job.progress" | "job.completed" | "job.failed";
+
+export type JobStatus = "queued" | "processing" | "completed" | "failed";
+
+export interface JobProgressEvent {
+  event: JobProgressEventType;
+  job_id: string;
+  status: JobStatus;
+  current_stage: PipelineStage;
+  overall_percent: number; // 0 to 100
+  message: string;
+  steps: PipelineStepInfo[];
+  updated_at: string; // ISO-8601 timestamp
+  result?: AnalysisResponse | null;
+  error?: Record<string, unknown> | ErrorDetail | null;
+}
+
 export interface AnalysisResponse {
   job_id: string;
-  status: "completed" | "processing" | "failed";
+  status: "queued" | "processing" | "completed" | "failed";
   metadata: SongMetadata;
   chords: ChordData[];
   improvisations: ImprovisationData[];
   chord_diagrams: ChordDiagram[];
   tablature: TablatureData;
   arrangements: ArrangementVariation[];
+  progress?: JobProgressEvent | null;
 }
 
 export interface ErrorDetail {
   code: string;
   message: string;
-  details: Record<string, unknown>;
+  details: Record<string, unknown> | unknown;
 }
 
 export interface ErrorEnvelope {
   error: ErrorDetail;
 }
 
+export type TransportType = "websocket" | "polling" | "mock" | "sync";
+
 export interface UploadProgressState {
   isUploading: boolean;
   progress: number; // 0 - 100
   stage: "idle" | "uploading" | "analyzing" | "completed" | "error";
   errorMessage?: string;
+  currentEvent?: JobProgressEvent | null;
+  transport?: TransportType;
+  elapsedSeconds?: number;
 }
 
 export interface ChordVoicingDetail {
@@ -237,4 +285,50 @@ export type VoiceFilterMode =
   | "melody"
   | "harmony"
   | "percussive";
+
+export interface CanonicalStageDefinition {
+  stage: PipelineStage;
+  label: string;
+  shortLabel: string;
+  description: string;
+  milestonePercent: number;
+}
+
+export const CANONICAL_PIPELINE_STAGES: CanonicalStageDefinition[] = [
+  {
+    stage: "separating_stems",
+    label: "Separating Audio Stems — Demucs",
+    shortLabel: "Stem Separation",
+    description: "Demucs 4-stem source separation isolating guitar & bass tracks",
+    milestonePercent: 25,
+  },
+  {
+    stage: "detecting_key_tempo",
+    label: "Detecting Musical Key & Tempo",
+    shortLabel: "Key & Tempo",
+    description: "Beat tracking (BPM) & Krumhansl-Schmuckler key signature detection",
+    milestonePercent: 40,
+  },
+  {
+    stage: "detecting_chords",
+    label: "Recognizing Chords & Improvisations",
+    shortLabel: "Chord Recognition",
+    description: "Harmonic chromagram, voicings & style-based substitutions",
+    milestonePercent: 60,
+  },
+  {
+    stage: "transcribing_tablature",
+    label: "Transcribing Guitar Tab — Basic Pitch + Viterbi",
+    shortLabel: "Tab Transcription",
+    description: "Polyphonic pitch extraction & biomechanical Viterbi fretboard mapping",
+    milestonePercent: 85,
+  },
+  {
+    stage: "generating_arrangement",
+    label: "Generating Fingerstyle Arrangement",
+    shortLabel: "AI Arrangement",
+    description: "Fingerstyle voice separation, thumb bass & style synthesis",
+    milestonePercent: 100,
+  },
+];
 

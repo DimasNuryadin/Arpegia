@@ -10,6 +10,7 @@ import { ArrangementStudioPanel } from "../components/ArrangementStudioPanel";
 import { ChordVoicingDiagram } from "../components/ChordVoicingDiagram";
 import { ImprovisationPanel } from "../components/ImprovisationPanel";
 import { GuitarFretboard } from "../components/GuitarFretboard";
+import { PipelineProgressTracker } from "../components/PipelineProgressTracker";
 import {
   AnalysisResponse,
   ArrangementRequest,
@@ -96,54 +97,90 @@ export default function Home() {
     return sum / analysisData.chords.length;
   }, [analysisData.chords]);
 
-  // Handle file selection and analysis (POST /api/v1/analyze)
-  const handleFileSelected = async (file: File) => {
-    setUploadedFile(file);
-    setUploadState({
-      isUploading: true,
-      progress: 5,
-      stage: "uploading",
-      errorMessage: `Uploading ${file.name}...`,
-    });
-
-    try {
-      const response = await api.analyzeAudio(file, {
-        mockMode: mockMode,
-        onProgress: (percent, stageText) => {
-          setUploadState((prev) => ({
-            ...prev,
-            progress: percent,
-            stage: percent < 50 ? "uploading" : "analyzing",
-            errorMessage: stageText,
-          }));
-        },
-      });
-
-      setAnalysisData(response);
-      setActiveArrangementId(null);
-      if (response.chords && response.chords.length > 0) {
-        setActiveChord(response.chords[0]);
-        setSelectedVoicingChord(response.chords[0].chord);
-      }
+  // Handle file selection and analysis (POST /api/v1/analyze?async_mode=true)
+  const handleFileSelected = useCallback(
+    async (file: File) => {
+      setUploadedFile(file);
       setUploadState({
-        isUploading: false,
-        progress: 100,
-        stage: "completed",
-      });
-      setStatusNotice(
-        `Analyzed "${file.name}": ${response.chords.length} chords, ${response.chord_diagrams.length} voicing diagrams, ${response.tablature.measures.length} tab measures & ${(response.arrangements || []).length} AI arrangements!`
-      );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Analysis failed";
-      setUploadState({
-        isUploading: false,
+        isUploading: true,
         progress: 0,
-        stage: "error",
-        errorMessage: msg,
+        stage: "uploading",
+        errorMessage: `Uploading "${file.name}" to neural backend...`,
+        transport: mockMode ? "mock" : "websocket",
+        currentEvent: null,
       });
-      setStatusNotice(`Analysis error: ${msg}`);
-    }
-  };
+
+      try {
+        const response = await api.analyzeAudio(file, {
+          mockMode: mockMode,
+          onProgress: (percent, stageText, event) => {
+            setUploadState((prev) => ({
+              ...prev,
+              progress: percent,
+              stage: percent < 100 ? "analyzing" : "completed",
+              errorMessage: stageText,
+              currentEvent: event ?? prev.currentEvent,
+            }));
+          },
+          onProgressEvent: (event) => {
+            setUploadState((prev) => ({
+              ...prev,
+              progress: event.overall_percent,
+              stage: event.status === "completed" ? "completed" : "analyzing",
+              errorMessage: event.message,
+              currentEvent: event,
+            }));
+          },
+          onTransportChange: (transport) => {
+            setUploadState((prev) => ({
+              ...prev,
+              transport,
+            }));
+          },
+        });
+
+        // Brief delay for the user to perceive the 100% completion checkmark before transition
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        setAnalysisData(response);
+        setActiveArrangementId(null);
+        if (response.chords && response.chords.length > 0) {
+          setActiveChord(response.chords[0]);
+          setSelectedVoicingChord(response.chords[0].chord);
+        }
+        setUploadState((prev) => ({
+          ...prev,
+          isUploading: false,
+          progress: 100,
+          stage: "completed",
+        }));
+        setStatusNotice(
+          `AI Pipeline Complete: Analyzed "${file.name}" through all 5 stages (${response.chords.length} chords, ${response.tablature.measures.length} tab measures & ${(response.arrangements || []).length} AI arrangements)!`
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Analysis failed";
+        setUploadState((prev) => ({
+          ...prev,
+          isUploading: false,
+          progress: 0,
+          stage: "error",
+          errorMessage: msg,
+        }));
+        setStatusNotice(`Analysis error: ${msg}`);
+      }
+    },
+    [mockMode]
+  );
+
+  // Phase 4: Instant 1-Click Simulation of the 5-Stage AI Pipeline Tracker
+  const handleSimulatePipeline = useCallback(async () => {
+    const mockFile = new File(
+      ["simulated guitar audio stream"],
+      "fingerstyle_arrangement_demo.mp3",
+      { type: "audio/mpeg" }
+    );
+    await handleFileSelected(mockFile);
+  }, [handleFileSelected]);
 
   // Handle Interactive Tablature Edit (PUT /api/v1/analyze/{job_id}/tablature)
   const handleUpdateTablature = useCallback(
@@ -341,111 +378,164 @@ export default function Home() {
           </div>
         )}
 
-        {/* 1. Audio Upload Component */}
-        <section aria-label="Audio Upload Zone">
-          <AudioUpload
-            onFileSelected={handleFileSelected}
-            uploadState={uploadState}
-            currentFileName={
-              uploadedFile?.name || analysisData.metadata.filename
-            }
-            onReset={handleReset}
-            onLoadDemoTrack={() => handleLoadPreset("neo-soul-g")}
-          />
-        </section>
-
-        {/* 2. Song Metadata Summary Card */}
-        <section aria-label="Song Metadata Summary">
-          <MetadataCard
-            metadata={analysisData.metadata}
-            chordsCount={analysisData.chords.length}
-            averageConfidence={averageConfidence}
-            isPlaying={isPlaying}
-          />
-        </section>
-
-        {/* 3. Interactive Audio Player & Synchronized Chord Timeline */}
-        <section aria-label="Audio Player and Synchronized Chord Timeline">
-          <AudioPlayerTimeline
-            chords={analysisData.chords}
-            totalDuration={analysisData.metadata.duration}
-            audioFile={uploadedFile}
-            onActiveChordChange={handleActiveChordChange}
-            selectedChordForVoicing={activeChord}
-            onSelectChordForVoicing={(chord) => {
-              setActiveChord(chord);
-              setSelectedVoicingChord(chord.chord);
-            }}
-            onPlaybackTimeChange={handlePlaybackTimeChange}
-            seekRequest={seekRequest}
-          />
-        </section>
-
-        {/* 4. Phase 3: AI Guitar Arrangement Studio & Variation Switcher */}
-        <section aria-label="AI Guitar Arrangement Studio Panel">
-          <ArrangementStudioPanel
-            jobId={analysisData.job_id}
-            originalTablature={analysisData.tablature}
-            arrangements={analysisData.arrangements || []}
-            activeArrangementId={activeArrangementId}
-            onSelectArrangement={(arrId) => setActiveArrangementId(arrId)}
-            onGenerateArrangement={handleGenerateArrangement}
-            onSelectChordForDiagram={(chord) => setSelectedVoicingChord(chord)}
-          />
-        </section>
-
-        {/* 5. Phase 2 & 3: Interactive 6-String Guitar Tablature Viewer, Polyphonic Voices, Web Audio Tab Synth & Multi-Format Export Hub */}
-        <section aria-label="Interactive Guitar Tablature Viewer and Editor">
-          <TablatureViewer
-            jobId={analysisData.job_id}
-            filename={analysisData.metadata.filename}
-            activeTitle={activeTabTitle}
-            activeArrangementId={activeArrangementId}
-            tablature={activeTablature}
-            currentTime={currentTime}
-            isMainPlayerPlaying={isPlaying}
-            onSeekMainPlayer={handleSeekFromTab}
-            onUpdateTablature={handleUpdateTablature}
-            onExportFormat={handleExportFormat}
-          />
-        </section>
-
-        {/* 5. Two-Column Studio Section: Improvisation Panel + SVG Chord Voicing Diagram */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Chord Improvisation Panel (Takes 2 cols) */}
+        {/* Phase 4: Real-Time Multi-Stage AI Pipeline Progress Tracker or Studio Workspace */}
+        {uploadState.isUploading ? (
           <section
-            className="lg:col-span-2"
-            aria-label="Chord Improvisation Panel"
+            aria-label="Real-Time AI Pipeline Progress Stepper"
+            className="animate-in fade-in duration-300 space-y-4"
           >
-            <ImprovisationPanel
-              improvisations={analysisData.improvisations}
-              activeChord={activeChord}
-              onSelectVoicingForDiagram={(chord) =>
-                setSelectedVoicingChord(chord)
+            <PipelineProgressTracker
+              progressEvent={uploadState.currentEvent}
+              overallPercent={uploadState.progress}
+              currentMessage={uploadState.errorMessage}
+              transport={uploadState.transport}
+              fileName={uploadedFile?.name || analysisData.metadata.filename}
+              isCompleted={uploadState.stage === "completed"}
+              isError={uploadState.stage === "error"}
+              errorMessage={
+                uploadState.stage === "error"
+                  ? uploadState.errorMessage
+                  : undefined
               }
+              onCancel={handleReset}
             />
           </section>
+        ) : (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* 1. Audio Upload Component */}
+            <section aria-label="Audio Upload Zone">
+              <AudioUpload
+                onFileSelected={handleFileSelected}
+                uploadState={uploadState}
+                currentFileName={
+                  uploadedFile?.name || analysisData.metadata.filename
+                }
+                onReset={handleReset}
+                onLoadDemoTrack={() => handleLoadPreset("neo-soul-g")}
+                onSimulatePipeline={handleSimulatePipeline}
+              />
+            </section>
 
-          {/* Phase 2 SVG Guitar Chord Voicing Diagram (Takes 1 col) */}
-          <section
-            className="lg:col-span-1"
-            aria-label="SVG Guitar Chord Voicing Diagram"
-          >
-            <ChordVoicingDiagram
-              selectedChordName={selectedVoicingChord || "G"}
-              activeChordName={activeChord?.chord}
-              chordDiagrams={analysisData.chord_diagrams}
-              tuning={analysisData.tablature?.tuning}
-              capo={analysisData.tablature?.capo}
-              onSelectChord={(chord) => setSelectedVoicingChord(chord)}
-            />
-          </section>
-        </div>
+            {/* Optional Collapsible Pipeline Diagnostic Banner */}
+            {uploadState.currentEvent && uploadState.currentEvent.steps && (
+              <details className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 text-xs font-mono text-slate-400 group">
+                <summary className="cursor-pointer select-none font-semibold text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    Last Pipeline Execution: 5 of 5 Stages Completed
+                  </span>
+                  <span className="text-amber-400 group-open:rotate-90 transition-transform">
+                    ▶
+                  </span>
+                </summary>
+                <div className="mt-3 pt-3 border-t border-slate-800">
+                  <PipelineProgressTracker
+                    progressEvent={uploadState.currentEvent}
+                    overallPercent={100}
+                    transport={uploadState.transport}
+                    fileName={
+                      uploadedFile?.name || analysisData.metadata.filename
+                    }
+                    isCompleted={true}
+                  />
+                </div>
+              </details>
+            )}
 
-        {/* 6. Full 12-Fret Horizontal Guitar Fretboard Neck Visualizer */}
-        <section aria-label="Full Guitar Fretboard Neck Visualizer">
-          <GuitarFretboard chordName={selectedVoicingChord || "G"} />
-        </section>
+            {/* 2. Song Metadata Summary Card */}
+            <section aria-label="Song Metadata Summary">
+              <MetadataCard
+                metadata={analysisData.metadata}
+                chordsCount={analysisData.chords.length}
+                averageConfidence={averageConfidence}
+                isPlaying={isPlaying}
+              />
+            </section>
+
+            {/* 3. Interactive Audio Player & Synchronized Chord Timeline */}
+            <section aria-label="Audio Player and Synchronized Chord Timeline">
+              <AudioPlayerTimeline
+                chords={analysisData.chords}
+                totalDuration={analysisData.metadata.duration}
+                audioFile={uploadedFile}
+                onActiveChordChange={handleActiveChordChange}
+                selectedChordForVoicing={activeChord}
+                onSelectChordForVoicing={(chord) => {
+                  setActiveChord(chord);
+                  setSelectedVoicingChord(chord.chord);
+                }}
+                onPlaybackTimeChange={handlePlaybackTimeChange}
+                seekRequest={seekRequest}
+              />
+            </section>
+
+            {/* 4. Phase 3: AI Guitar Arrangement Studio & Variation Switcher */}
+            <section aria-label="AI Guitar Arrangement Studio Panel">
+              <ArrangementStudioPanel
+                jobId={analysisData.job_id}
+                originalTablature={analysisData.tablature}
+                arrangements={analysisData.arrangements || []}
+                activeArrangementId={activeArrangementId}
+                onSelectArrangement={(arrId) => setActiveArrangementId(arrId)}
+                onGenerateArrangement={handleGenerateArrangement}
+                onSelectChordForDiagram={(chord) => setSelectedVoicingChord(chord)}
+              />
+            </section>
+
+            {/* 5. Phase 2 & 3: Interactive 6-String Guitar Tablature Viewer, Polyphonic Voices, Web Audio Tab Synth & Multi-Format Export Hub */}
+            <section aria-label="Interactive Guitar Tablature Viewer and Editor">
+              <TablatureViewer
+                jobId={analysisData.job_id}
+                filename={analysisData.metadata.filename}
+                activeTitle={activeTabTitle}
+                activeArrangementId={activeArrangementId}
+                tablature={activeTablature}
+                currentTime={currentTime}
+                isMainPlayerPlaying={isPlaying}
+                onSeekMainPlayer={handleSeekFromTab}
+                onUpdateTablature={handleUpdateTablature}
+                onExportFormat={handleExportFormat}
+              />
+            </section>
+
+            {/* 6. Two-Column Studio Section: Improvisation Panel + SVG Chord Voicing Diagram */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Chord Improvisation Panel (Takes 2 cols) */}
+              <section
+                className="lg:col-span-2"
+                aria-label="Chord Improvisation Panel"
+              >
+                <ImprovisationPanel
+                  improvisations={analysisData.improvisations}
+                  activeChord={activeChord}
+                  onSelectVoicingForDiagram={(chord) =>
+                    setSelectedVoicingChord(chord)
+                  }
+                />
+              </section>
+
+              {/* Phase 2 SVG Guitar Chord Voicing Diagram (Takes 1 col) */}
+              <section
+                className="lg:col-span-1"
+                aria-label="SVG Guitar Chord Voicing Diagram"
+              >
+                <ChordVoicingDiagram
+                  selectedChordName={selectedVoicingChord || "G"}
+                  activeChordName={activeChord?.chord}
+                  chordDiagrams={analysisData.chord_diagrams}
+                  tuning={analysisData.tablature?.tuning}
+                  capo={analysisData.tablature?.capo}
+                  onSelectChord={(chord) => setSelectedVoicingChord(chord)}
+                />
+              </section>
+            </div>
+
+            {/* 7. Full 12-Fret Horizontal Guitar Fretboard Neck Visualizer */}
+            <section aria-label="Full Guitar Fretboard Neck Visualizer">
+              <GuitarFretboard chordName={selectedVoicingChord || "G"} />
+            </section>
+          </div>
+        )}
       </main>
 
       {/* Studio Footer */}
@@ -453,10 +543,10 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-500">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Arpegia Platform • Phase 3 AI Music Intelligence</span>
+            <span>Arpegia Platform • Phase 4 Real-Time AI Pipeline</span>
             <span className="text-slate-700">|</span>
             <span>
-              Arrangement Studio • Polyphonic Voices • Multi-Format Export Hub
+              WebSocket Stream • HTTP Polling Fallback • 5-Stage Guitar Intelligence
             </span>
           </div>
 
@@ -465,6 +555,12 @@ export default function Home() {
               API Target:{" "}
               <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
                 {api.getApiUrl()}
+              </code>
+            </span>
+            <span>
+              WS Target:{" "}
+              <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                {api.getWsBaseUrl()}
               </code>
             </span>
           </div>
