@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Arpegia | AI-Powered Guitar Intelligence Platform",
   description:
-    "Phase 2 Guitar Intelligence - Interactive 6-String Tablature Editor, SVG Chord Voicing Diagrams & Web Audio Synth",
+    "Phase 3 AI Music Intelligence - Fingerstyle & Style Arrangement Studio, Polyphonic Voice Visualization & Multi-Format Export Hub",
 };
 
 export default function RootLayout({
