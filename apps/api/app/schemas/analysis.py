@@ -1,6 +1,6 @@
 """Pydantic v2 schemas defining the Arpegia Phase 1, Phase 2 & Phase 3 Guitar Intelligence contract."""
 
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DEFAULT_GUITAR_TUNING: List[str] = ["E2", "A2", "D3", "G3", "B3", "E4"]
@@ -314,6 +314,94 @@ class ArrangementRequest(BaseModel):
 
 
 # ============================================================================
+# Phase 4 Real-Time Async Pipeline Streaming Models
+# ============================================================================
+
+
+PipelineStage = Literal[
+    "queued",
+    "separating_stems",
+    "detecting_key_tempo",
+    "detecting_chords",
+    "transcribing_tablature",
+    "generating_arrangement",
+    "completed",
+    "failed",
+]
+
+StageStatus = Literal["pending", "in_progress", "completed", "skipped", "failed"]
+
+
+class PipelineStepInfo(BaseModel):
+    """Progress status and detail for an individual pipeline execution stage."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stage: PipelineStage = Field(..., description="Pipeline execution stage identifier")
+    label: str = Field(..., description="Human-readable stage label")
+    status: StageStatus = Field(
+        default="pending",
+        description="Current stage status ('pending', 'in_progress', 'completed', 'skipped', 'failed')",
+    )
+    progress_percent: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Stage-level completion percentage (0 to 100)",
+    )
+    detail: Optional[str] = Field(
+        default=None,
+        description="Optional stage execution details, notes, or diagnostic message",
+    )
+
+
+class JobProgressEvent(BaseModel):
+    """Real-time pipeline progress snapshot broadcast over WebSocket and HTTP polling."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    event: Literal["job.progress", "job.completed", "job.failed"] = Field(
+        default="job.progress",
+        description="Event type name ('job.progress', 'job.completed', 'job.failed')",
+    )
+    job_id: str = Field(..., description="Unique job identifier")
+    status: Literal["queued", "processing", "completed", "failed"] = Field(
+        default="processing",
+        description="High-level job processing state ('queued', 'processing', 'completed', 'failed')",
+    )
+    current_stage: PipelineStage = Field(
+        ...,
+        description="Currently active pipeline stage",
+    )
+    overall_percent: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Total overall pipeline progress percentage (0 to 100)",
+    )
+    message: str = Field(
+        default="",
+        description="Human-readable status summary message",
+    )
+    steps: List[PipelineStepInfo] = Field(
+        default_factory=list,
+        description="Detailed list of ordered pipeline step statuses",
+    )
+    updated_at: str = Field(
+        ...,
+        description="ISO-8601 formatted timestamp of the event",
+    )
+    result: Optional["AnalysisResponse"] = Field(
+        default=None,
+        description="Populated with full AnalysisResponse when status == 'completed'",
+    )
+    error: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Populated with standard error envelope dict when status == 'failed'",
+    )
+
+
+# ============================================================================
 # Top-Level Analysis Response & Error Envelope Contracts
 # ============================================================================
 
@@ -504,6 +592,14 @@ class AnalysisResponse(BaseModel):
             "generated during analysis, plus custom variations generated on demand)"
         ),
     )
+    progress: Optional[JobProgressEvent] = Field(
+        default=None,
+        description="Optional pipeline progress event snapshot",
+    )
+
+
+JobProgressEvent.model_rebuild()
+AnalysisResponse.model_rebuild()
 
 
 class ErrorDetail(BaseModel):
