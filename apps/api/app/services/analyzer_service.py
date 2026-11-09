@@ -1044,24 +1044,24 @@ class AnalyzerService:
         variation: Optional[ArrangementVariation] = None
         try:
             _ensure_audio_engine_path()
-            from engine import arranger as engine_arranger  # type: ignore
+            from engine.arrangement_generator import generate_arrangement as engine_generate_arrangement  # type: ignore
 
-            if hasattr(engine_arranger, "generate_arrangement"):
-                raw_var = engine_arranger.generate_arrangement(
-                    chords=[c.model_dump() for c in job.chords],
-                    style=request.style,
-                    difficulty=request.difficulty,
-                    capo=request.capo,
-                    tempo_scale=request.tempo_scale,
-                    tuning=job.tablature.tuning,
+            raw_var = engine_generate_arrangement(
+                metadata=job.metadata.model_dump(),
+                chords=[c.model_dump() for c in job.chords],
+                base_tablature=job.tablature.model_dump(),
+                style=request.style,
+                difficulty=request.difficulty,
+                capo=request.capo,
+                tempo_scale=request.tempo_scale,
+            )
+            if raw_var:
+                variation = (
+                    raw_var
+                    if isinstance(raw_var, ArrangementVariation)
+                    else ArrangementVariation.model_validate(raw_var)
                 )
-                if raw_var:
-                    variation = (
-                        raw_var
-                        if isinstance(raw_var, ArrangementVariation)
-                        else ArrangementVariation.model_validate(raw_var)
-                    )
-                    variation.tablature = self._normalize_tablature(variation.tablature)
+                variation.tablature = self._normalize_tablature(variation.tablature)
         except Exception as exc:
             logger.debug("Using internal deterministic arrangement generator (%s)", exc)
 
