@@ -15,6 +15,9 @@ from .improvisation_agent import ImprovisationAgent
 from .chord_voicings import ChordVoicingGenerator
 from .tab_transcriber import TabTranscriber
 from .arrangement_generator import ArrangementGenerator, generate_arrangement
+from .stem_separator import DemucsStemSeparator
+from .polyphonic_transcriber import transcribe_polyphonic_guitar
+from .viterbi_fretboard import assign_optimal_fretboard_path
 from .exporters import (
     export_to_midi_bytes,
     export_to_musicxml,
@@ -257,6 +260,11 @@ class PipelineState(TypedDict, total=False):
     duration: float
     bpm: Union[int, float]
     time_signature: str
+    stem_dir: Optional[str]
+    guitar_stem: Optional[str]
+    harmonic_mix: Optional[str]
+    bass_stem: Optional[str]
+    is_separated: bool
     chroma: Any
     beat_times: Any
     key: str
@@ -297,8 +305,23 @@ def audio_loader_node(state: PipelineState) -> Dict[str, Any]:
     }
 
 
+def stem_separation_node(state: PipelineState) -> Dict[str, Any]:
+    """Node 2: StemSeparationNode - Demucs 4-stem source separation and harmonic mix routing."""
+    file_path = state["file_path"]
+    separator = DemucsStemSeparator()
+    sep_result = separator.separate(file_path)
+
+    return {
+        "guitar_stem": sep_result["guitar_stem"],
+        "harmonic_mix": sep_result["harmonic_mix"],
+        "bass_stem": sep_result["bass_stem"],
+        "stem_dir": sep_result["stem_dir"],
+        "is_separated": sep_result["is_separated"],
+    }
+
+
 def key_and_tempo_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 2: KeyAndTempoNode - Computes BPM, beat grid, and detects musical key."""
+    """Node 3: KeyAndTempoNode - Computes BPM, beat grid, and detects musical key."""
     y = state["y"]
     sr = state["sr"]
 
@@ -306,8 +329,19 @@ def key_and_tempo_node(state: PipelineState) -> Dict[str, Any]:
     bpm, beat_frames, beat_times = processor.detect_beats(y, sr)
     time_sig = processor.estimate_time_signature(y, sr)
 
-    # Extract chromagram for key and chord detection
-    chroma = processor.extract_chromagram(y, sr, method="cqt")
+    # Route harmonic_mix to key and chord detection if source separation occurred
+    harmonic_mix_path = state.get("harmonic_mix")
+    chroma_y, chroma_sr = y, sr
+    if harmonic_mix_path and state.get("is_separated") and os.path.exists(harmonic_mix_path):
+        try:
+            y_harm, sr_harm = processor.load_audio(harmonic_mix_path)
+            if y_harm is not None and len(y_harm) > 0:
+                chroma_y, chroma_sr = y_harm, sr_harm
+        except Exception:
+            chroma_y, chroma_sr = y, sr
+
+    # Extract chromagram for key and chord detection from harmonic signal
+    chroma = processor.extract_chromagram(chroma_y, chroma_sr, method="cqt")
 
     key_detector = KeyDetector()
     key_result = key_detector.detect_key_from_chroma(chroma)
@@ -372,27 +406,40 @@ def chord_diagram_node(state: PipelineState) -> Dict[str, Any]:
 
 
 def tab_transcription_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 6: TabTranscriptionNode - Transcribes notes, solves fretboard path, builds measures and ASCII tab."""
+    """Node 7: TabTranscriptionNode - Transcribes notes, solves fretboard path, builds measures and ASCII tab."""
     y = state["y"]
     sr = state["sr"]
     duration = state["duration"]
     bpm = state.get("bpm", 120)
     time_signature = state.get("time_signature", "4/4")
+    guitar_stem = state.get("guitar_stem") or state.get("file_path")
 
-    transcriber = TabTranscriber(sample_rate=sr)
+    # If source separation succeeded, attempt to load audio from guitar_stem for DSP fallback
+    y_target, sr_target = y, sr
+    if guitar_stem and state.get("is_separated") and os.path.exists(guitar_stem):
+        try:
+            processor = AudioProcessor(sample_rate=sr)
+            y_stem, sr_stem = processor.load_audio(guitar_stem)
+            if y_stem is not None and len(y_stem) > 0:
+                y_target, sr_target = y_stem, sr_stem
+        except Exception:
+            y_target, sr_target = y, sr
+
+    transcriber = TabTranscriber(sample_rate=sr_target)
     tablature = transcriber.transcribe(
-        y=y,
-        sr=sr,
+        y=y_target,
+        sr=sr_target,
         duration=duration,
         bpm=bpm,
         time_signature=time_signature,
+        audio_path=guitar_stem,
     )
 
     return {"tablature": tablature}
 
 
 def arrangement_generator_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 7: ArrangementGeneratorNode - Synthesizes default Fingerstyle solo arrangement (Phase 3)."""
+    """Node 8: ArrangementGeneratorNode - Synthesizes default Fingerstyle solo arrangement (Phase 3)."""
     metadata = {
         "filename": state.get("filename", "audio.wav"),
         "duration": state.get("duration", 4.8),
@@ -430,7 +477,7 @@ def arrangement_generator_node(state: PipelineState) -> Dict[str, Any]:
 
 
 def output_validator_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 8: OutputValidatorNode - Validates schema and compiles final payload."""
+    """Node 9: OutputValidatorNode - Validates schema and compiles final payload."""
     payload = {
         "metadata": {
             "filename": state["filename"],
@@ -463,6 +510,7 @@ def create_orchestrator():
 
     # Register nodes
     graph.add_node("AudioLoaderNode", audio_loader_node)
+    graph.add_node("StemSeparationNode", stem_separation_node)
     graph.add_node("KeyAndTempoNode", key_and_tempo_node)
     graph.add_node("ChordDetectionNode", chord_detection_node)
     graph.add_node("ImprovisationNode", improvisation_node)
@@ -473,7 +521,8 @@ def create_orchestrator():
 
     # Wire linear pipeline edges
     graph.add_edge(START, "AudioLoaderNode")
-    graph.add_edge("AudioLoaderNode", "KeyAndTempoNode")
+    graph.add_edge("AudioLoaderNode", "StemSeparationNode")
+    graph.add_edge("StemSeparationNode", "KeyAndTempoNode")
     graph.add_edge("KeyAndTempoNode", "ChordDetectionNode")
     graph.add_edge("ChordDetectionNode", "ImprovisationNode")
     graph.add_edge("ImprovisationNode", "ChordDiagramNode")
@@ -507,8 +556,16 @@ def run_pipeline(
     }
     if filename:
         initial_state["filename"] = filename
-    final_state = app.invoke(initial_state)
-    return final_state["output"]
+
+    stem_dir_to_clean: Optional[str] = None
+    try:
+        final_state = app.invoke(initial_state)
+        stem_dir_to_clean = final_state.get("stem_dir")
+        return final_state["output"]
+    finally:
+        if stem_dir_to_clean:
+            DemucsStemSeparator.cleanup(stem_dir_to_clean)
+        DemucsStemSeparator.cleanup_all()
 
 
 def generate_custom_arrangement(

@@ -1,28 +1,19 @@
 """Audio-to-MIDI transcription, guitar fretboard pathfinding, and ASCII tablature engine."""
 
 from typing import List, Dict, Any, Optional, Tuple, Literal
+import os
 import math
 import numpy as np
 import librosa
 
-
-# Standard 6-string guitar tuning from High E (string 1) to Low E (string 6)
-# String 1 = E4 (MIDI 64)
-# String 2 = B3 (MIDI 59)
-# String 3 = G3 (MIDI 55)
-# String 4 = D3 (MIDI 50)
-# String 5 = A2 (MIDI 45)
-# String 6 = E2 (MIDI 40)
-DEFAULT_TUNING_PITCHES = {
-    1: 64,  # High E4
-    2: 59,  # B3
-    3: 55,  # G3
-    4: 50,  # D3
-    5: 45,  # A2
-    6: 40,  # Low E2
-}
-
-DEFAULT_GUITAR_TUNING = ["E2", "A2", "D3", "G3", "B3", "E4"]
+from .polyphonic_transcriber import transcribe_polyphonic_guitar
+from .viterbi_fretboard import (
+    assign_optimal_fretboard_path,
+    get_candidate_positions,
+    get_string_open_pitch,
+    DEFAULT_TUNING_PITCHES,
+    DEFAULT_GUITAR_TUNING,
+)
 
 
 class TabTranscriber:
@@ -242,122 +233,7 @@ class TabTranscriber:
 
         Minimizes hand position shifts across consecutive notes using Dynamic Programming.
         """
-        if not notes:
-            return []
-
-        # Find candidates for each note
-        candidates_per_note: List[List[Tuple[int, int]]] = []
-        for n in notes:
-            cands = self.get_candidate_positions(n["midi"], tuning=tuning, capo=capo)
-            if not cands:
-                # Extreme pitch fallback: clamp to string 1 or 6
-                if n["midi"] > 64:
-                    cands = [(1, min(24, max(0, n["midi"] - 64)))]
-                else:
-                    cands = [(6, min(24, max(0, n["midi"] - 40)))]
-            candidates_per_note.append(cands)
-
-        K = len(notes)
-        dp: List[List[float]] = []
-        parent: List[List[int]] = []
-
-        # Initialize note 0
-        dp0 = []
-        for s, f in candidates_per_note[0]:
-            # Favor open string (f=0) or comfortable lower frets
-            if f == 0:
-                cost = 0.0
-            else:
-                cost = 0.05 * f
-            dp0.append(cost)
-        dp.append(dp0)
-        parent.append([-1] * len(dp0))
-
-        # Viterbi forward pass
-        for i in range(1, K):
-            curr_cands = candidates_per_note[i]
-            prev_cands = candidates_per_note[i - 1]
-            t_curr = notes[i]["start_time"]
-            t_prev = notes[i - 1]["start_time"]
-            dur_prev = notes[i - 1]["duration"]
-            is_overlapping = t_curr < (t_prev + dur_prev - 0.04)
-
-            dp_i = []
-            parent_i = []
-
-            for curr_s, curr_f in curr_cands:
-                best_cost = float("inf")
-                best_prev_idx = 0
-
-                for prev_idx, (prev_s, prev_f) in enumerate(prev_cands):
-                    prev_cost = dp[i - 1][prev_idx]
-
-                    # Transition cost
-                    trans_cost = 0.0
-
-                    # 1. Polyphony constraint: cannot play two simultaneous notes on same string
-                    if is_overlapping and curr_s == prev_s:
-                        trans_cost += 500.0
-
-                    # 2. Hand shift cost
-                    if curr_s == prev_s and curr_f == prev_f:
-                        # Exact same note position repeated
-                        trans_cost += 0.0
-                    elif curr_f == 0:
-                        # Playing an open string does not shift hand position
-                        trans_cost += 0.01
-                    elif prev_f == 0:
-                        # Moving from open string to fretted note
-                        trans_cost += 0.05 * curr_f
-                    else:
-                        fret_dist = abs(curr_f - prev_f)
-                        if fret_dist <= 4:
-                            # Within 4-fret hand box
-                            trans_cost += 0.10 * fret_dist
-                        else:
-                            # Hand position jump
-                            trans_cost += 1.0 + 0.5 * (fret_dist - 4)
-
-                    # 3. String distance
-                    if not (curr_s == prev_s and curr_f == prev_f):
-                        trans_cost += 0.10 * abs(curr_s - prev_s)
-
-                    # 4. Ergonomic preference for lower frets unless higher register
-                    if curr_f > 0:
-                        trans_cost += 0.02 * curr_f
-
-                    total_cost = prev_cost + trans_cost
-                    if total_cost < best_cost:
-                        best_cost = total_cost
-                        best_prev_idx = prev_idx
-
-                dp_i.append(best_cost)
-                parent_i.append(best_prev_idx)
-
-            dp.append(dp_i)
-            parent.append(parent_i)
-
-        # Backtrack optimal path
-        best_end_idx = int(np.argmin(dp[-1]))
-        optimal_positions: List[Tuple[int, int]] = [candidates_per_note[-1][best_end_idx]]
-
-        curr_idx = best_end_idx
-        for i in range(K - 1, 0, -1):
-            curr_idx = parent[i][curr_idx]
-            optimal_positions.append(candidates_per_note[i - 1][curr_idx])
-
-        optimal_positions.reverse()
-
-        # Update notes with string and fret
-        fretted_notes: List[Dict[str, Any]] = []
-        for i, n in enumerate(notes):
-            s, f = optimal_positions[i]
-            item = dict(n)
-            item["string"] = int(s)
-            item["fret"] = int(f)
-            fretted_notes.append(item)
-
-        return fretted_notes
+        return assign_optimal_fretboard_path(notes, tuning=tuning, capo=capo)
 
     # =========================================================================
     # 3. Articulation Technique Heuristics
@@ -593,25 +469,32 @@ class TabTranscriber:
         time_signature: str = "4/4",
         tuning: Optional[List[str]] = None,
         capo: int = 0,
+        audio_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute full tablature transcription pipeline and return TablatureData dictionary."""
         effective_tuning = tuning if tuning is not None else list(DEFAULT_GUITAR_TUNING)
 
-        # 1. Pitch & onset extraction
-        raw_notes = self.extract_notes_from_audio(y=y, sr=sr, duration=duration)
+        raw_notes: List[Dict[str, Any]] = []
 
-        # 2. Optimal fretboard pathfinding
-        fretted_notes = self.map_notes_to_fretboard(raw_notes, tuning=effective_tuning, capo=capo)
+        # 1. Try Spotify Basic Pitch polyphonic transcription if audio file path is provided
+        if audio_path and os.path.exists(audio_path):
+            try:
+                raw_notes = transcribe_polyphonic_guitar(audio_path)
+            except Exception:
+                raw_notes = []
 
-        # 3. Articulation technique detection
-        annotated_notes = self.detect_techniques(fretted_notes)
+        # Fall back to deterministic librosa pYIN transcription if Basic Pitch returned no notes or unavailable
+        if not raw_notes:
+            raw_notes = self.extract_notes_from_audio(y=y, sr=sr, duration=duration)
 
-        # 3b. Assign default polyphonic voice role ('bass' on strings 5-6, 'melody' on strings 1-4)
-        for n in annotated_notes:
-            if not n.get("voice"):
-                n["voice"] = "bass" if int(n.get("string", 1)) >= 5 else "melody"
+        # 2. Optimal fretboard pathfinding via Viterbi DP (assigns string, fret, technique, voice)
+        annotated_notes = assign_optimal_fretboard_path(
+            notes=raw_notes,
+            tuning=effective_tuning,
+            capo=capo,
+        )
 
-        # 4. Measure segmentation
+        # 3. Measure segmentation
         measures = self.segment_into_measures(
             notes=annotated_notes,
             duration=duration,
@@ -619,10 +502,10 @@ class TabTranscriber:
             time_signature=time_signature,
         )
 
-        # 5. Difficulty estimation
+        # 4. Difficulty estimation
         difficulty = self.estimate_difficulty(annotated_notes, duration=duration)
 
-        # 6. ASCII tablature rendering
+        # 5. ASCII tablature rendering
         ascii_tab = self.render_ascii_tab(measures, tuning=effective_tuning)
 
         return {

@@ -16,3 +16,10 @@ redis>=5.0.0
 # Testing
 pytest>=8.0.0
 
+# Full-Band Source Separation & Polyphonic Audio-to-MIDI (Optional ML Dependencies)
+# Gracefully degraded at runtime if absent or disabled via environment flags
+demucs>=4.0.1
+basic-pitch[onnx]>=0.3.0
+pretty_midi>=0.2.10
+
+

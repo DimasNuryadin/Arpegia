@@ -14,6 +14,9 @@ from .exporters import (
     export_to_ascii,
     export_arrangement,
 )
+from .stem_separator import DemucsStemSeparator
+from .polyphonic_transcriber import transcribe_polyphonic_guitar
+from .viterbi_fretboard import assign_optimal_fretboard_path
 from .orchestrator import (
     create_orchestrator,
     run_pipeline,
@@ -28,6 +31,9 @@ __all__ = [
     "ImprovisationAgent",
     "ChordVoicingGenerator",
     "TabTranscriber",
+    "DemucsStemSeparator",
+    "transcribe_polyphonic_guitar",
+    "assign_optimal_fretboard_path",
     "ArrangementGenerator",
     "generate_arrangement",
     "export_to_midi_bytes",
