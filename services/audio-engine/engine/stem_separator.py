@@ -97,6 +97,7 @@ class DemucsStemSeparator:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=60,
             )
 
             # Discover stem files inside temp_dir
