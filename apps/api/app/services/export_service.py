@@ -19,7 +19,7 @@ from app.schemas.analysis import (
     TablatureData,
     TabNote,
 )
-from app.services.analyzer_service import render_ascii_tab
+from app.services.analyzer_service import _ensure_audio_engine_path, render_ascii_tab
 
 logger = logging.getLogger(__name__)
 
@@ -492,30 +492,53 @@ class ExportService:
         export_format: ExportFormat,
         variation: Optional[ArrangementVariation],
     ) -> Optional[bytes]:
-        """Attempt to invoke `services/audio-engine` export module if present and valid."""
+        """Attempt to invoke `services/audio-engine/engine/exporters.py` directly if present and valid."""
         try:
-            from engine import exporter as engine_exporter  # type: ignore
+            _ensure_audio_engine_path()
+            from engine import exporters as engine_exporters  # type: ignore
 
-            if hasattr(engine_exporter, "export_tablature"):
-                result = engine_exporter.export_tablature(
-                    tablature=tablature.model_dump(),
-                    metadata=metadata.model_dump(),
-                    export_format=export_format,
-                    chords=[c.model_dump() for c in chords],
-                    arrangement=variation.model_dump() if variation else None,
+            meta_dict = metadata.model_dump()
+            chords_list = [c.model_dump() for c in chords]
+            target_dict = variation.model_dump() if variation else tablature.model_dump()
+
+            result = None
+            if export_format == "midi" and hasattr(engine_exporters, "export_to_midi_bytes"):
+                result = engine_exporters.export_to_midi_bytes(
+                    metadata=meta_dict,
+                    chords=chords_list,
+                    tablature=target_dict,
                 )
-                if isinstance(result, str):
-                    result = result.encode("utf-8")
-                if isinstance(result, (bytes, bytearray)) and len(result) > 0:
-                    data = bytes(result)
-                    if export_format == "midi" and data.startswith(b"MThd"):
-                        return data
-                    if export_format == "musicxml" and b"<score-partwise" in data:
-                        return data
-                    if export_format == "pdf" and data.startswith(b"%PDF-"):
-                        return data
-                    if export_format == "ascii" and len(data.decode("utf-8", errors="ignore").splitlines()) >= 6:
-                        return data
+            elif export_format == "musicxml" and hasattr(engine_exporters, "export_to_musicxml"):
+                result = engine_exporters.export_to_musicxml(
+                    metadata=meta_dict,
+                    chords=chords_list,
+                    tablature=target_dict,
+                )
+            elif export_format == "pdf" and hasattr(engine_exporters, "export_to_pdf_bytes"):
+                result = engine_exporters.export_to_pdf_bytes(
+                    metadata=meta_dict,
+                    chords=chords_list,
+                    tablature=target_dict,
+                )
+            elif export_format == "ascii" and hasattr(engine_exporters, "export_to_ascii"):
+                result = engine_exporters.export_to_ascii(
+                    metadata=meta_dict,
+                    chords=chords_list,
+                    tablature=target_dict,
+                )
+
+            if isinstance(result, str):
+                result = result.encode("utf-8")
+            if isinstance(result, (bytes, bytearray)) and len(result) > 0:
+                data = bytes(result)
+                if export_format == "midi" and data.startswith(b"MThd"):
+                    return data
+                if export_format == "musicxml" and b"<score-partwise" in data:
+                    return data
+                if export_format == "pdf" and data.startswith(b"%PDF-"):
+                    return data
+                if export_format == "ascii" and len(data.decode("utf-8", errors="ignore").splitlines()) >= 6:
+                    return data
         except Exception as exc:
             logger.debug("Using built-in ExportService serializer (%s)", exc)
         return None

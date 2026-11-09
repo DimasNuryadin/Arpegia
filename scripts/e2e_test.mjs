@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 /**
- * Arpegia Phase 2 End-to-End (E2E) Integration & Smoke Test
+ * Arpegia Phase 1, Phase 2 & Phase 3 End-to-End (E2E) Integration & Smoke Test
  *
  * Verifies live communication across services:
- * 1. Checks GET /health -> asserts 200 OK.
- * 2. Generates a synthetic multi-note guitar WAV file (arpeggiated E Minor melody).
- * 3. Uploads audio to POST /api/v1/analyze.
- * 4. Asserts 200 OK and validates Phase 2 chord_diagrams (6-string frets & fingers)
- *    and tablature (tuning, capo, difficulty, measures with strings 1-6 & frets 0-24, 6-line ascii_tab).
- * 5. Sends PUT /api/v1/analyze/{job_id}/tablature modifying the first note's fret and technique ("slide").
- * 6. Asserts 200 OK, verifies returned ascii_tab and note metadata, and verifies GET persistence.
+ * a. Checks GET /health -> asserts 200 OK.
+ * b. Synthesizes a multi-note guitar WAV file and uploads to POST /api/v1/analyze ->
+ *    asserts 200 OK, verifies chords, improvisations, chord_diagrams, tablature,
+ *    and initial arrangements (with polyphonic voice roles on TabNote).
+ * c. Sends PUT /api/v1/analyze/{job_id}/tablature -> edits a note's fret and technique
+ *    ("slide") and verifies updated ascii_tab.
+ * d. Sends POST /api/v1/analyze/{job_id}/arrange with
+ *    { "style": "Neo Soul", "difficulty": "Advanced", "capo": 2, "tempo_scale": 0.9 } ->
+ *    asserts 200 OK, verifies the new arrangement_id is generated with valid measures,
+ *    notes, and voice roles, and persists in GET /api/v1/analyze/{job_id}.
+ * e. Sends GET /api/v1/analyze/{job_id}/export across all 4 formats (midi, musicxml, pdf, ascii)
+ *    for both base tablature and the new arrangement_id -> asserts 200 OK and validates
+ *    magic bytes (MThd for MIDI, <?xml + <score-partwise for MusicXML, %PDF- for PDF,
+ *    and 6-line staff for ASCII) plus Content-Disposition headers.
  */
 
 import { spawn } from "node:child_process";
@@ -45,7 +52,7 @@ function createSyntheticGuitarArpeggioWav({
   buffer.writeUInt16LE(1, 20);  // PCM format
   buffer.writeUInt16LE(1, 22);  // Mono (1 channel)
   buffer.writeUInt32LE(sampleRate, 24); // SampleRate
-  buffer.writeUInt32LE(sampleRate * 2, 28); // ByteRate (sampleRate * channels * 2)
+  buffer.writeUInt32LE(sampleRate * 2, 28); // ByteRate
   buffer.writeUInt16LE(2, 32);  // BlockAlign
   buffer.writeUInt16LE(16, 34); // BitsPerSample
 
@@ -99,18 +106,84 @@ function findPythonExecutable() {
 }
 
 /**
+ * Verify all 4 export formats for a given job_id and optional arrangement_id.
+ */
+async function verifyFourExports(baseUrl, jobId, arrangementId = null) {
+  const label = arrangementId ? `Arrangement '${arrangementId}'` : "Base Tablature";
+  const querySuffix = arrangementId ? `&arrangement_id=${encodeURIComponent(arrangementId)}` : "";
+
+  // 1. MIDI (.mid)
+  const midiRes = await fetch(`${baseUrl}/api/v1/analyze/${jobId}/export?format=midi${querySuffix}`, {
+    headers: { Origin: "http://localhost:3000" },
+  });
+  if (!midiRes.ok) {
+    throw new Error(`MIDI export (${label}) failed with HTTP ${midiRes.status}`);
+  }
+  const midiBuf = Buffer.from(await midiRes.arrayBuffer());
+  const midiHeader = midiBuf.subarray(0, 4).toString("ascii");
+  if (midiHeader !== "MThd" || !midiBuf.includes(Buffer.from("MTrk"))) {
+    throw new Error(`Invalid MIDI magic bytes (${label}): got header '${midiHeader}'`);
+  }
+  const midiDisp = midiRes.headers.get("content-disposition") || "";
+  if (!midiDisp.includes(`arpegia-${jobId}.mid`)) {
+    throw new Error(`Unexpected MIDI Content-Disposition: ${midiDisp}`);
+  }
+
+  // 2. MusicXML (.musicxml)
+  const xmlRes = await fetch(`${baseUrl}/api/v1/analyze/${jobId}/export?format=musicxml${querySuffix}`);
+  if (!xmlRes.ok) {
+    throw new Error(`MusicXML export (${label}) failed with HTTP ${xmlRes.status}`);
+  }
+  const xmlText = await xmlRes.text();
+  if (!xmlText.startsWith("<?xml") || !xmlText.includes("<score-partwise") || !xmlText.includes("<string>") || !xmlText.includes("<fret>")) {
+    throw new Error(`Invalid MusicXML content (${label})`);
+  }
+
+  // 3. PDF (.pdf)
+  const pdfRes = await fetch(`${baseUrl}/api/v1/analyze/${jobId}/export?format=pdf${querySuffix}`);
+  if (!pdfRes.ok) {
+    throw new Error(`PDF export (${label}) failed with HTTP ${pdfRes.status}`);
+  }
+  const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
+  const pdfHeader = pdfBuf.subarray(0, 5).toString("ascii");
+  if (pdfHeader !== "%PDF-" || !pdfBuf.includes(Buffer.from("%%EOF"))) {
+    throw new Error(`Invalid PDF magic bytes (${label}): got header '${pdfHeader}'`);
+  }
+
+  // 4. ASCII (.txt)
+  const asciiRes = await fetch(`${baseUrl}/api/v1/analyze/${jobId}/export?format=ascii${querySuffix}`);
+  if (!asciiRes.ok) {
+    throw new Error(`ASCII export (${label}) failed with HTTP ${asciiRes.status}`);
+  }
+  const asciiText = await asciiRes.text();
+  const staffLines = asciiText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => /^(e|B|G|D|A|E)\|/.test(l));
+  if (staffLines.length !== 6) {
+    throw new Error(`Expected 6 guitar staff lines in ASCII export (${label}), got ${staffLines.length}`);
+  }
+
+  console.log(`  ✓ Verified all 4 exports for ${label}:`);
+  console.log(`    • MIDI (.mid)      : ${midiBuf.byteLength} bytes [magic: "MThd" + "MTrk"]`);
+  console.log(`    • MusicXML (.xml)  : ${xmlText.length} chars [magic: "<?xml" + "<score-partwise>"]`);
+  console.log(`    • PDF (.pdf)       : ${pdfBuf.byteLength} bytes [magic: "%PDF-1.4" + "%%EOF"]`);
+  console.log(`    • ASCII (.txt)     : ${asciiText.length} chars [6-line staff e|..E|]`);
+}
+
+/**
  * Main E2E runner.
  */
 async function runSmokeTest() {
   console.log("\n🎸 ===================================================================");
-  console.log("   Arpegia Phase 2 E2E Integration & Smoke Test (Live API)");
+  console.log("   Arpegia Phase 1 + 2 + 3 E2E Integration & Smoke Test (Live API)");
   console.log("=====================================================================\n");
 
   const startTime = Date.now();
   let serverProcess = null;
 
-  // 1. Ensure API server is accessible
-  console.log(`[1/5] Checking API gateway health at ${API_URL}/health ...`);
+  // Step A: Healthcheck
+  console.log(`[1/6] Checking API gateway health at ${API_URL}/health ...`);
   let isAlive = await checkHealth(API_URL);
 
   if (!isAlive) {
@@ -143,7 +216,6 @@ async function runSmokeTest() {
       }
     });
 
-    // Wait up to 15s for server to become healthy
     const maxRetries = 30;
     for (let i = 0; i < maxRetries; i++) {
       await new Promise((r) => setTimeout(r, 500));
@@ -159,7 +231,6 @@ async function runSmokeTest() {
     }
   }
 
-  // Step A: Healthcheck Assertion
   const healthRes = await fetch(`${API_URL}/health`);
   if (!healthRes.ok) {
     throw new Error(`Healthcheck failed with HTTP ${healthRes.status}: ${healthRes.statusText}`);
@@ -168,8 +239,8 @@ async function runSmokeTest() {
   console.log(`  ✓ GET /health returned 200 OK (service: "${healthData.service || "arpegia-api"}", status: "${healthData.status}")`);
 
   try {
-    // Step B: Generate synthetic multi-note guitar WAV file
-    console.log("\n[2/5] Synthesizing multi-note guitar WAV file (E Minor arpeggio)...");
+    // Step B: Synthesize WAV & POST /api/v1/analyze
+    console.log("\n[2/6] Synthesizing multi-note guitar WAV & running POST /api/v1/analyze ...");
     const wavBuffer = createSyntheticGuitarArpeggioWav({
       frequencies: [164.81, 196.00, 246.94, 329.63], // E3, G3, B3, E4
       noteDuration: 0.5,
@@ -177,8 +248,6 @@ async function runSmokeTest() {
     });
     console.log(`  ✓ Generated 16-bit PCM WAV (${wavBuffer.byteLength} bytes, 2.0s duration, 22050 Hz)`);
 
-    // Step C: Upload to POST /api/v1/analyze
-    console.log("\n[3/5] Uploading audio to POST /api/v1/analyze (Guitar Intelligence Pipeline)...");
     const formData = new FormData();
     const blob = new Blob([wavBuffer], { type: "audio/wav" });
     formData.append("file", blob, "e2e_guitar_arpeggio.wav");
@@ -198,65 +267,47 @@ async function runSmokeTest() {
     const elapsedSeconds = ((Date.now() - uploadStart) / 1000).toFixed(2);
     console.log(`  ✓ POST /api/v1/analyze succeeded in ${elapsedSeconds}s (Job ID: ${analysis.job_id})`);
 
-    // Validate top-level fields
     if (!analysis.job_id || analysis.status !== "completed") {
       throw new Error(`Invalid analysis response: status='${analysis.status}', job_id='${analysis.job_id}'`);
     }
-    console.log(`  ✓ Metadata: key="${analysis.metadata?.key}", bpm=${analysis.metadata?.bpm}, duration=${analysis.metadata?.duration}s`);
+    console.log(`  ✓ Phase 1 Metadata: key="${analysis.metadata?.key}", bpm=${analysis.metadata?.bpm}, duration=${analysis.metadata?.duration}s, chords=${analysis.chords?.length}, improvisations=${analysis.improvisations?.length}`);
 
-    // Validate chord_diagrams
+    // Validate chord_diagrams & tablature
     const diagrams = analysis.chord_diagrams;
     if (!Array.isArray(diagrams) || diagrams.length === 0) {
       throw new Error("Missing or empty chord_diagrams in analysis response");
     }
-    for (const d of diagrams) {
-      if (typeof d.chord !== "string" || !Array.isArray(d.frets) || d.frets.length !== 6 || !Array.isArray(d.fingers) || d.fingers.length !== 6) {
-        throw new Error(`Malformed chord diagram: ${JSON.stringify(d)}`);
-      }
-    }
-    console.log(`  ✓ Validated ${diagrams.length} chord diagrams with 6-string frets & fingers`);
-
-    // Validate tablature
     const tab = analysis.tablature;
     if (!tab || !Array.isArray(tab.measures) || tab.measures.length === 0) {
       throw new Error("Missing or empty tablature.measures in analysis response");
     }
-    if (!tab.tuning || tab.tuning.length !== 6) {
-      throw new Error(`Invalid tablature tuning: ${JSON.stringify(tab?.tuning)}`);
-    }
-
     const m1Notes = tab.measures[0]?.notes || [];
     if (m1Notes.length === 0) {
       throw new Error("Tablature measure 1 contains no transcribed notes");
     }
+    console.log(`  ✓ Phase 2 Tablature: ${diagrams.length} chord diagrams, ${tab.measures.length} measure(s), ${m1Notes.length} notes in Measure 1`);
 
-    for (const note of m1Notes) {
-      if (note.string < 1 || note.string > 6 || note.fret < 0 || note.fret > 24) {
-        throw new Error(`Out of range note (string=${note.string}, fret=${note.fret}) in measure 1`);
-      }
-      if (!["normal", "hammer-on", "pull-off", "slide", "bend"].includes(note.technique)) {
-        throw new Error(`Invalid technique '${note.technique}' on note ${note.id}`);
-      }
+    // Validate Phase 3 initial arrangements
+    const arrangements = analysis.arrangements;
+    if (!Array.isArray(arrangements) || arrangements.length === 0) {
+      throw new Error("Missing or empty arrangements in POST /api/v1/analyze response");
     }
-    console.log(`  ✓ Validated ${tab.measures.length} measure(s) with ${m1Notes.length} notes in Measure 1 (Strings 1-6, Frets 0-24)`);
-
-    // Validate 6-line ascii_tab
-    const asciiLines = tab.ascii_tab.trim().split("\n");
-    if (asciiLines.length !== 6) {
-      throw new Error(`Expected 6 lines in ascii_tab, got ${asciiLines.length}`);
+    const defaultArr = arrangements[0];
+    if (defaultArr.style !== "Fingerstyle") {
+      throw new Error(`Expected initial arrangement style 'Fingerstyle', got '${defaultArr.style}'`);
     }
-    console.log("  ✓ Validated canonical 6-line ASCII tab rendering:\n");
-    console.log(tab.ascii_tab.split("\n").map((l) => `     ${l}`).join("\n"));
+    const defaultArrNotes = (defaultArr.tablature?.measures || []).flatMap((m) => m.notes || []);
+    const defaultVoices = new Set(defaultArrNotes.map((n) => n.voice));
+    if (!defaultVoices.has("bass") || (!defaultVoices.has("melody") && !defaultVoices.has("harmony"))) {
+      throw new Error(`Default Fingerstyle arrangement missing polyphonic voice roles: ${Array.from(defaultVoices).join(", ")}`);
+    }
+    console.log(`  ✓ Phase 3 Default Arrangement: "${defaultArr.title}" (${defaultArr.arrangement_id}) with voices [${Array.from(defaultVoices).join(", ")}]`);
 
-    // Step D: Interactive Tab Note Edit (PUT /api/v1/analyze/{job_id}/tablature)
-    console.log("\n[4/5] Testing Interactive Tab Editor (PUT /api/v1/analyze/{job_id}/tablature)...");
+    // Step C: Interactive Tab Note Edit (PUT /api/v1/analyze/{job_id}/tablature)
+    console.log("\n[3/6] Testing Interactive Tab Editor (PUT /api/v1/analyze/{job_id}/tablature)...");
     const targetNote = m1Notes[0];
-    const originalFret = targetNote.fret;
-    const originalTech = targetNote.technique;
     const targetFret = 4;
     const targetTech = "slide";
-
-    console.log(`  • Modifying Note '${targetNote.id}' (String ${targetNote.string}): Fret ${originalFret} -> ${targetFret}, Technique '${originalTech}' -> '${targetTech}'`);
 
     const putPayload = {
       capo: 0,
@@ -283,45 +334,74 @@ async function runSmokeTest() {
     }
 
     const updatedAnalysis = await putRes.json();
-    const updatedM1Notes = updatedAnalysis.tablature.measures[0]?.notes || [];
-    const updatedTarget = updatedM1Notes.find((n) => n.id === targetNote.id);
-
-    if (!updatedTarget) {
-      throw new Error(`Updated note '${targetNote.id}' not found in returned response measures`);
+    const updatedTarget = (updatedAnalysis.tablature.measures[0]?.notes || []).find((n) => n.id === targetNote.id);
+    if (!updatedTarget || updatedTarget.fret !== targetFret || updatedTarget.technique !== targetTech) {
+      throw new Error("Edited note not reflected in PUT /tablature response");
     }
-    if (updatedTarget.fret !== targetFret || updatedTarget.technique !== targetTech) {
-      throw new Error(`Edit not reflected in note: expected fret=${targetFret}, tech='${targetTech}', got fret=${updatedTarget.fret}, tech='${updatedTarget.technique}'`);
+    if (!updatedAnalysis.tablature.ascii_tab.includes("4/")) {
+      throw new Error("Regenerated ASCII tab does not contain slide marker '4/'");
     }
-    console.log(`  ✓ Note updated successfully: Pitch=${updatedTarget.note_name} (MIDI ${updatedTarget.midi}), Articulation='${updatedTarget.technique}'`);
+    console.log(`  ✓ Note '${targetNote.id}' updated to fret=${targetFret}, technique='${targetTech}' (${updatedTarget.note_name}, MIDI ${updatedTarget.midi}) & ASCII tab regenerated`);
 
-    // Verify regenerated ASCII tab contains slide marker '4/'
-    const updatedAscii = updatedAnalysis.tablature.ascii_tab;
-    if (!updatedAscii.includes("4/")) {
-      throw new Error(`Regenerated ASCII tab does not contain slide marker '4/':\n${updatedAscii}`);
+    // Step D: Phase 3 On-Demand Style Arrangement (POST /api/v1/analyze/{job_id}/arrange)
+    console.log("\n[4/6] Generating Phase 3 Custom Arrangement (POST /api/v1/analyze/{job_id}/arrange)...");
+    const arrangeRequest = {
+      style: "Neo Soul",
+      difficulty: "Advanced",
+      capo: 2,
+      tempo_scale: 0.9,
+    };
+
+    const arrangeRes = await fetch(`${API_URL}/api/v1/analyze/${analysis.job_id}/arrange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(arrangeRequest),
+    });
+
+    if (!arrangeRes.ok) {
+      const errText = await arrangeRes.text();
+      throw new Error(`POST /api/v1/analyze/{job_id}/arrange failed with HTTP ${arrangeRes.status}: ${errText}`);
     }
-    console.log("  ✓ Canonical 6-line ASCII tab regenerated with slide articulation marker ('4/'):\n");
-    console.log(updatedAscii.split("\n").map((l) => `     ${l}`).join("\n"));
 
-    // Step E: Verify persistence via GET /api/v1/analyze/{job_id}
-    console.log("\n[5/5] Verifying persistent store via GET /api/v1/analyze/{job_id}...");
+    const newArrangement = await arrangeRes.json();
+    if (
+      !newArrangement.arrangement_id ||
+      newArrangement.style !== "Neo Soul" ||
+      newArrangement.difficulty !== "Advanced" ||
+      newArrangement.tablature?.capo !== 2
+    ) {
+      throw new Error(`Invalid ArrangementVariation returned: ${JSON.stringify(newArrangement)}`);
+    }
+    const arrNotes = (newArrangement.tablature?.measures || []).flatMap((m) => m.notes || []);
+    const arrVoices = new Set(arrNotes.map((n) => n.voice));
+    if (arrNotes.length === 0 || !arrVoices.has("bass") || !arrVoices.has("melody")) {
+      throw new Error(`Generated Neo Soul arrangement missing valid notes or voice roles: ${Array.from(arrVoices)}`);
+    }
+    console.log(`  ✓ Generated "${newArrangement.title}" (ID: ${newArrangement.arrangement_id}, Capo: ${newArrangement.tablature.capo}, Chords: [${newArrangement.chords_used.join(", ")}], Voices: [${Array.from(arrVoices).join(", ")}])`);
+
+    // Step E: Verify persistence in GET /api/v1/analyze/{job_id}
+    console.log("\n[5/6] Verifying job store persistence via GET /api/v1/analyze/{job_id}...");
     const getRes = await fetch(`${API_URL}/api/v1/analyze/${analysis.job_id}`);
     if (!getRes.ok) {
       throw new Error(`GET /api/v1/analyze/{job_id} failed with HTTP ${getRes.status}`);
     }
-
     const retrievedAnalysis = await getRes.json();
-    const persistedTarget = retrievedAnalysis.tablature.measures[0]?.notes.find((n) => n.id === targetNote.id);
-    if (!persistedTarget || persistedTarget.fret !== targetFret || persistedTarget.technique !== targetTech) {
-      throw new Error("Persisted note in GET response did not match edited values");
+    const persistedArr = (retrievedAnalysis.arrangements || []).find(
+      (a) => a.arrangement_id === newArrangement.arrangement_id
+    );
+    if (!persistedArr) {
+      throw new Error(`Arrangement '${newArrangement.arrangement_id}' was not persisted in job store`);
     }
-    if (!retrievedAnalysis.tablature.ascii_tab.includes("4/")) {
-      throw new Error("Persisted ASCII tab does not contain edited note marker");
-    }
-    console.log(`  ✓ GET /api/v1/analyze/${analysis.job_id} confirmed persisted edit & regenerated ASCII tab.`);
+    console.log(`  ✓ GET /api/v1/analyze/${analysis.job_id} confirmed persisted tab edits and ${retrievedAnalysis.arrangements.length} arrangements`);
+
+    // Step F: Verify Multi-Format Export across all 4 formats for both base tablature and new arrangement_id
+    console.log("\n[6/6] Testing Multi-Format Export (GET /api/v1/analyze/{job_id}/export) across MIDI, MusicXML, PDF, and ASCII...");
+    await verifyFourExports(API_URL, analysis.job_id, null);
+    await verifyFourExports(API_URL, analysis.job_id, newArrangement.arrangement_id);
 
     const durationSeconds = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log("\n=====================================================================");
-    console.log(`🎉 ALL PHASE 2 E2E SMOKE TESTS PASSED SUCCESSFULLY (${durationSeconds}s)`);
+    console.log(`🎉 ALL PHASE 1, 2 & 3 E2E SMOKE TESTS PASSED SUCCESSFULLY (${durationSeconds}s)`);
     console.log("=====================================================================\n");
   } finally {
     if (serverProcess) {

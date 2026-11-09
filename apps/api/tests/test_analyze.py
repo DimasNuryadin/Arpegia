@@ -548,7 +548,7 @@ async def test_phase3_export_all_four_formats_with_and_without_arrangement_id(
         staff_lines = [
             line
             for line in ascii_resp.text.splitlines()
-            if line.strip() and not line.startswith("#")
+            if line.strip() and line.strip().startswith(("e|", "B|", "G|", "D|", "A|", "E|"))
         ]
         assert len(staff_lines) == 6
         assert staff_lines[0].startswith("e|")
