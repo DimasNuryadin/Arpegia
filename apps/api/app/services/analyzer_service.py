@@ -1,4 +1,4 @@
-"""Audio analysis service orchestrating file storage, validation, engine execution, and tab editing."""
+"""Audio analysis service orchestrating file storage, validation, engine execution, tab editing, and AI arrangement generation."""
 
 import logging
 import os
@@ -18,8 +18,12 @@ from app.schemas.analysis import (
     DEFAULT_GUITAR_TUNING,
     AnalysisMetadata,
     AnalysisResponse,
+    ArrangementRequest,
+    ArrangementStyle,
+    ArrangementVariation,
     ChordDiagram,
     ChordItem,
+    DifficultyLevel,
     ImprovisationItem,
     TabDifficultyType,
     TablatureData,
@@ -27,6 +31,7 @@ from app.schemas.analysis import (
     TabMeasure,
     TabNote,
     TabTechniqueType,
+    VoiceRole,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +77,14 @@ PITCH_CLASS_TO_SEMITONE: Dict[str, int] = {
 }
 
 VALID_TECHNIQUES = {"normal", "hammer-on", "pull-off", "slide", "bend"}
+VALID_VOICE_ROLES = {"melody", "bass", "harmony", "percussive"}
+VALID_STYLES = {
+    "Fingerstyle",
+    "Neo Soul",
+    "Jazz Chord Melody",
+    "Acoustic Strumming",
+}
+VALID_DIFFICULTIES = {"Beginner", "Intermediate", "Advanced"}
 
 TECHNIQUE_ASCII_MARKER: Dict[str, str] = {
     "normal": "",
@@ -106,6 +119,41 @@ CHORD_VOICING_LIBRARY: Dict[str, Dict[str, Any]] = {
     "E7": {"frets": [0, 2, 0, 1, 0, 0], "fingers": [0, 2, 0, 1, 0, 0], "base_fret": 1},
     "A7": {"frets": [-1, 0, 2, 0, 2, 0], "fingers": [0, 0, 2, 0, 3, 0], "base_fret": 1},
     "B7": {"frets": [-1, 2, 1, 2, 0, 2], "fingers": [0, 2, 1, 3, 0, 4], "base_fret": 1},
+}
+
+STYLE_CHORD_EXTENSIONS: Dict[str, Dict[str, str]] = {
+    "Fingerstyle": {
+        "G": "Gadd9",
+        "Em": "Em7",
+        "C": "Cmaj7",
+        "D": "Dsus4",
+        "Am": "Am9",
+        "F": "Fmaj7#11",
+    },
+    "Neo Soul": {
+        "G": "Gmaj9",
+        "Em": "Em11",
+        "C": "Cmaj9#11",
+        "D": "D13sus4",
+        "Am": "Am11",
+        "F": "Fmaj9",
+    },
+    "Jazz Chord Melody": {
+        "G": "Gmaj7#11",
+        "Em": "Em9",
+        "C": "Cmaj9",
+        "D": "D13b9",
+        "Am": "Am9",
+        "F": "Fmaj13",
+    },
+    "Acoustic Strumming": {
+        "G": "G",
+        "Em": "Em7",
+        "C": "Cadd9",
+        "D": "Dsus4",
+        "Am": "Am7",
+        "F": "Fmaj7",
+    },
 }
 
 
@@ -155,6 +203,17 @@ def compute_pitch_from_string_fret(
     return midi_val, midi_to_note_name(midi_val)
 
 
+def infer_voice_role(string_num: int, explicit_voice: Optional[VoiceRole] = None) -> VoiceRole:
+    """Determine polyphonic VoiceRole ('bass', 'harmony', 'melody', 'percussive') for a note."""
+    if explicit_voice in VALID_VOICE_ROLES:
+        return explicit_voice  # type: ignore[return-value]
+    if string_num >= 5:
+        return "bass"
+    if string_num == 4:
+        return "harmony"
+    return "melody"
+
+
 def render_ascii_tab(
     measures: List[TabMeasure],
     tuning: Optional[List[str]] = None,
@@ -166,7 +225,6 @@ def render_ascii_tab(
     """
     string_labels = ["e", "B", "G", "D", "A", "E"]
     if tuning and len(tuning) == 6:
-        # Derive display labels from tuning (reverse order: string 1 at top to string 6 at bottom)
         derived: List[str] = []
         for idx, pitch in enumerate(reversed(tuning)):
             letter = re.sub(r"[^A-Za-z#b]", "", pitch) or string_labels[idx]
@@ -220,7 +278,6 @@ def resolve_chord_diagram(chord_name: str) -> ChordDiagram:
             base_fret=int(entry["base_fret"]),
         )
 
-    # Attempt base triad / root fallback (e.g. C#m -> Am shape transposed or root match)
     root_match = re.match(r"^([A-G][#b]?)(m?)", clean)
     if root_match:
         candidate = f"{root_match.group(1)}{root_match.group(2)}"
@@ -242,7 +299,6 @@ def resolve_chord_diagram(chord_name: str) -> ChordDiagram:
                 base_fret=int(entry["base_fret"]),
             )
 
-    # Default open G voicing fallback
     default_entry = CHORD_VOICING_LIBRARY["G"]
     return ChordDiagram(
         chord=clean or "G",
@@ -282,14 +338,14 @@ def synthesize_tablature(
     if not chords or chords[0].chord == "G":
         first_end = chords[0].end_time if chords else 2.4
         step = round(first_end / 4.0, 2) if first_end > 0 else 0.6
-        pattern = [
-            (6, 3, 0.95),  # G2
-            (4, 0, 0.93),  # D3
-            (3, 0, 0.94),  # G3
-            (2, 0, 0.92),  # B3
+        pattern: List[Tuple[int, int, float, VoiceRole]] = [
+            (6, 3, 0.95, "bass"),     # G2
+            (4, 0, 0.93, "harmony"),  # D3
+            (3, 0, 0.94, "melody"),   # G3
+            (2, 0, 0.92, "melody"),   # B3
         ]
         notes: List[TabNote] = []
-        for idx, (string_num, fret_num, conf) in enumerate(pattern, start=1):
+        for idx, (string_num, fret_num, conf, voice_role) in enumerate(pattern, start=1):
             midi_val, note_name = compute_pitch_from_string_fret(
                 string_num, fret_num, active_tuning, capo
             )
@@ -304,6 +360,7 @@ def synthesize_tablature(
                     note_name=note_name,
                     confidence=conf,
                     technique="normal",
+                    voice=voice_role,
                 )
             )
         measures = [
@@ -323,13 +380,11 @@ def synthesize_tablature(
             ascii_tab=ascii_tab,
         )
 
-    # Otherwise build arpeggiated measures from each detected chord's voicing diagram
     measures = []
     note_counter = 1
     for m_idx, chord_item in enumerate(chords, start=1):
         diagram = resolve_chord_diagram(chord_item.chord)
         playable_strings: List[Tuple[int, int]] = []
-        # diagram.frets is ordered from string 6 (index 0) to string 1 (index 5)
         for idx, fret_val in enumerate(diagram.frets):
             if fret_val >= 0:
                 string_num = 6 - idx
@@ -356,6 +411,7 @@ def synthesize_tablature(
                     note_name=note_name,
                     confidence=round(min(1.0, max(0.5, chord_item.confidence)), 2),
                     technique="normal",
+                    voice=infer_voice_role(string_num),
                 )
             )
             note_counter += 1
@@ -376,6 +432,187 @@ def synthesize_tablature(
         difficulty=difficulty,
         measures=measures,
         ascii_tab=ascii_tab,
+    )
+
+
+def synthesize_arrangement_variation(
+    chords: List[ChordItem],
+    style: ArrangementStyle = "Fingerstyle",
+    difficulty: DifficultyLevel = "Intermediate",
+    capo: int = 0,
+    tempo_scale: float = 1.0,
+    tuning: Optional[List[str]] = None,
+    is_default: bool = False,
+) -> ArrangementVariation:
+    """Synthesize a playable style arrangement variation with polyphonic voice separation."""
+    active_tuning = (
+        list(tuning) if (tuning and len(tuning) == 6) else list(DEFAULT_GUITAR_TUNING)
+    )
+    clamped_capo = max(0, min(12, int(capo)))
+    clamped_tempo = max(0.5, min(1.5, float(tempo_scale or 1.0)))
+
+    style_slug = re.sub(r"[^a-z0-9]+", "-", style.lower()).strip("-")
+    diff_slug = difficulty.lower()
+
+    if is_default and style == "Fingerstyle":
+        arrangement_id = "arr-fingerstyle-default"
+    elif clamped_capo > 0:
+        arrangement_id = f"arr-{style_slug}-{diff_slug}-capo{clamped_capo}"
+    else:
+        arrangement_id = f"arr-{style_slug}-{diff_slug}"
+
+    style_titles: Dict[str, str] = {
+        "Fingerstyle": "Fingerstyle Solo Arrangement",
+        "Neo Soul": "Neo Soul Extended Voicing Arrangement",
+        "Jazz Chord Melody": "Jazz Chord Melody Arrangement",
+        "Acoustic Strumming": "Acoustic Strumming & Rhythmic Groove Arrangement",
+    }
+    title = style_titles.get(style, f"{style} Arrangement")
+
+    style_descriptions: Dict[str, str] = {
+        "Fingerstyle": (
+            "Alternating thumb bass on strings 4-6 with syncopated melody and "
+            "open-string harmonic resonance on strings 1-3."
+        ),
+        "Neo Soul": (
+            "Extended 9th/11th Neo Soul substitutions with syncopated thumb bass on strings 5-6, "
+            "inner voice harmony on strings 3-4, and embellished melody slides on strings 1-2"
+            + (f" (Capo {clamped_capo}, {clamped_tempo:g}x tempo)." if (clamped_capo or clamped_tempo != 1.0) else ".")
+        ),
+        "Jazz Chord Melody": (
+            "Drop-2 and rootless jazz voicings with walking bass motion on strings 5-6, "
+            "guide-tone harmony on strings 3-4, and chord-melody voice leading on strings 1-2."
+        ),
+        "Acoustic Strumming": (
+            "Root-fifth alternating bass with warm open-string chord voicings, "
+            "rhythmic percussive backbeat accents, and bright top-string melody."
+        ),
+    }
+    description = style_descriptions.get(style, f"{style} arrangement ({difficulty}).")
+
+    ext_map = STYLE_CHORD_EXTENSIONS.get(style, STYLE_CHORD_EXTENSIONS["Fingerstyle"])
+    source_chords = chords if chords else [
+        ChordItem(chord="G", start_time=0.0, end_time=2.4, confidence=0.94),
+        ChordItem(chord="Em", start_time=2.4, end_time=4.8, confidence=0.91),
+        ChordItem(chord="C", start_time=4.8, end_time=7.2, confidence=0.88),
+        ChordItem(chord="D", start_time=7.2, end_time=9.6, confidence=0.92),
+    ]
+    chords_used: List[str] = []
+    for c_item in source_chords:
+        reharm = ext_map.get(c_item.chord, f"{c_item.chord}maj7")
+        if reharm not in chords_used:
+            chords_used.append(reharm)
+
+    # Style-specific note templates: (string, base_fret, technique, voice, rel_onset, rel_dur)
+    style_templates: Dict[str, List[Tuple[int, int, TabTechniqueType, VoiceRole, float, float]]] = {
+        "Fingerstyle": [
+            (6, 3, "normal", "bass", 0.0, 0.5),
+            (3, 2, "hammer-on", "harmony", 0.25, 0.25),
+            (1, 3, "normal", "melody", 0.5, 0.25),
+            (4, 2, "normal", "percussive", 0.75, 0.25),
+        ],
+        "Neo Soul": [
+            (6, 3, "normal", "bass", 0.0, 0.5),
+            (4, 4, "normal", "harmony", 0.25, 0.25),
+            (2, 7, "slide", "melody", 0.5, 0.25),
+            (3, 4, "pull-off", "percussive", 0.75, 0.25),
+        ],
+        "Jazz Chord Melody": [
+            (6, 3, "normal", "bass", 0.0, 0.4),
+            (4, 4, "normal", "harmony", 0.25, 0.3),
+            (3, 4, "normal", "harmony", 0.5, 0.25),
+            (2, 3, "slide", "melody", 0.75, 0.25),
+        ],
+        "Acoustic Strumming": [
+            (6, 3, "normal", "bass", 0.0, 0.35),
+            (4, 0, "normal", "harmony", 0.25, 0.25),
+            (3, 0, "normal", "percussive", 0.5, 0.2),
+            (1, 3, "normal", "melody", 0.75, 0.25),
+        ],
+    }
+
+    template = style_templates.get(style, style_templates["Fingerstyle"])
+    prefix_map = {
+        "Fingerstyle": "arr-note",
+        "Neo Soul": "arr-ns",
+        "Jazz Chord Melody": "arr-jcm",
+        "Acoustic Strumming": "arr-as",
+    }
+    id_prefix = prefix_map.get(style, "arr-note")
+
+    measures: List[TabMeasure] = []
+    note_idx = 1
+    for m_idx, chord_item in enumerate(source_chords[:4], start=1):
+        base_span = max(0.8, chord_item.end_time - chord_item.start_time)
+        scaled_span = round(base_span / clamped_tempo, 2)
+        m_start = round((m_idx - 1) * scaled_span, 2)
+        m_end = round(m_start + scaled_span, 2)
+
+        diagram = resolve_chord_diagram(chord_item.chord)
+        root_fret = next((f for f in diagram.frets if f >= 0), 3)
+
+        m_notes: List[TabNote] = []
+        for t_idx, (string_num, base_fret, tech, voice_role, rel_start, rel_dur) in enumerate(template):
+            if m_idx == 1:
+                raw_fret = base_fret
+            else:
+                raw_fret = root_fret if t_idx == 0 else base_fret
+            adjusted_fret = max(0, min(24, raw_fret - clamped_capo if raw_fret >= clamped_capo else raw_fret))
+            if difficulty == "Beginner":
+                tech_used: TabTechniqueType = "normal"
+            elif difficulty == "Advanced" and t_idx == 2 and tech == "normal":
+                tech_used = "slide"
+            else:
+                tech_used = tech
+
+            midi_val, note_name = compute_pitch_from_string_fret(
+                string_num, adjusted_fret, active_tuning, clamped_capo
+            )
+            n_start = round(m_start + rel_start * scaled_span, 2)
+            n_dur = max(0.15, round(rel_dur * scaled_span, 2))
+
+            m_notes.append(
+                TabNote(
+                    id=f"{id_prefix}-{note_idx}",
+                    start_time=n_start,
+                    duration=n_dur,
+                    string=string_num,
+                    fret=adjusted_fret,
+                    midi=midi_val,
+                    note_name=note_name,
+                    confidence=0.95,
+                    technique=tech_used,
+                    voice=voice_role,
+                )
+            )
+            note_idx += 1
+
+        measures.append(
+            TabMeasure(
+                measure_number=m_idx,
+                start_time=m_start,
+                end_time=m_end,
+                notes=m_notes,
+            )
+        )
+
+    ascii_tab = render_ascii_tab(measures, active_tuning)
+    tab_data = TablatureData(
+        tuning=active_tuning,
+        capo=clamped_capo,
+        difficulty=difficulty,
+        measures=measures,
+        ascii_tab=ascii_tab,
+    )
+
+    return ArrangementVariation(
+        arrangement_id=arrangement_id,
+        title=title,
+        style=style,
+        difficulty=difficulty,
+        description=description,
+        chords_used=chords_used,
+        tablature=tab_data,
     )
 
 
@@ -414,7 +651,8 @@ _ensure_audio_engine_path()
 class AnalyzerService:
     """Handles audio upload validation, temporary file persistence,
 
-    audio-engine interaction, Phase 2 guitar intelligence synthesis, and interactive tab editing.
+    audio-engine interaction, Phase 2 & Phase 3 guitar intelligence synthesis,
+    interactive tab editing, and AI style arrangement generation.
     """
 
     def __init__(self) -> None:
@@ -506,8 +744,22 @@ class AnalyzerService:
             except Exception as e:
                 logger.debug("Failed to read WAV duration: %s", e)
 
-        # Standard fallback duration
         return 180.5
+
+    def _normalize_tablature(self, tab_data: TablatureData) -> TablatureData:
+        """Ensure every note in a TablatureData has valid midi, note_name, voice, and 6-line ascii_tab."""
+        for measure in tab_data.measures:
+            for note in measure.notes:
+                if not note.midi or not note.note_name:
+                    midi_val, note_name = compute_pitch_from_string_fret(
+                        note.string, note.fret, tab_data.tuning, tab_data.capo
+                    )
+                    note.midi = midi_val
+                    note.note_name = note_name
+                note.voice = infer_voice_role(note.string, note.voice)
+        if not tab_data.ascii_tab or len(tab_data.ascii_tab.strip().splitlines()) < 6:
+            tab_data.ascii_tab = render_ascii_tab(tab_data.measures, tab_data.tuning)
+        return tab_data
 
     def _parse_engine_chord_diagrams(
         self, raw_diagrams: Any, chords: List[ChordItem]
@@ -539,25 +791,42 @@ class AnalyzerService:
                     else TablatureData.model_validate(raw_tablature)
                 )
                 if tab_data.measures:
-                    # Fill any missing pitch details if needed
-                    for measure in tab_data.measures:
-                        for note in measure.notes:
-                            if not note.midi or not note.note_name:
-                                midi_val, note_name = compute_pitch_from_string_fret(
-                                    note.string, note.fret, tab_data.tuning, tab_data.capo
-                                )
-                                note.midi = midi_val
-                                note.note_name = note_name
-                    # If ascii_tab is missing or blank, render it
-                    if not tab_data.ascii_tab or not tab_data.ascii_tab.strip():
-                        tab_data.ascii_tab = render_ascii_tab(
-                            tab_data.measures, tab_data.tuning
-                        )
-                    return tab_data
+                    return self._normalize_tablature(tab_data)
             except Exception as exc:
                 logger.warning("Invalid tablature payload from engine (%s); synthesizing.", exc)
 
         return synthesize_tablature(chords)
+
+    def _parse_engine_arrangements(
+        self, raw_arrangements: Any, chords: List[ChordItem]
+    ) -> List[ArrangementVariation]:
+        """Parse `arrangements` from audio-engine or synthesize at least 1 default Fingerstyle variation."""
+        parsed: List[ArrangementVariation] = []
+        if isinstance(raw_arrangements, list) and len(raw_arrangements) > 0:
+            for item in raw_arrangements:
+                try:
+                    arr = (
+                        item
+                        if isinstance(item, ArrangementVariation)
+                        else ArrangementVariation.model_validate(item)
+                    )
+                    arr.tablature = self._normalize_tablature(arr.tablature)
+                    parsed.append(arr)
+                except Exception as exc:
+                    logger.warning("Skipping invalid arrangement from engine: %s", exc)
+
+        if not parsed:
+            parsed.append(
+                synthesize_arrangement_variation(
+                    chords=chords,
+                    style="Fingerstyle",
+                    difficulty="Intermediate",
+                    capo=0,
+                    tempo_scale=1.0,
+                    is_default=True,
+                )
+            )
+        return parsed
 
     def _run_audio_engine(
         self, file_path: Path, original_filename: str
@@ -568,6 +837,7 @@ class AnalyzerService:
             List[ImprovisationItem],
             List[ChordDiagram],
             TablatureData,
+            List[ArrangementVariation],
         ]
     ]:
         """Invoke the `services/audio-engine` LangGraph orchestrator pipeline."""
@@ -624,8 +894,11 @@ class AnalyzerService:
             tablature = self._parse_engine_tablature(
                 pipeline_output.get("tablature"), chords
             )
+            arrangements = self._parse_engine_arrangements(
+                pipeline_output.get("arrangements"), chords
+            )
 
-            return metadata, chords, improvisations, chord_diagrams, tablature
+            return metadata, chords, improvisations, chord_diagrams, tablature, arrangements
         except (ImportError, Exception) as exc:
             logger.info(
                 "Audio engine pipeline unavailable or could not decode file (%s). Using fallback analysis.",
@@ -643,8 +916,9 @@ class AnalyzerService:
         List[ImprovisationItem],
         List[ChordDiagram],
         TablatureData,
+        List[ArrangementVariation],
     ]:
-        """Generate high-fidelity Phase 1 + Phase 2 fallback analysis matching the shared contract."""
+        """Generate high-fidelity Phase 1 + Phase 2 + Phase 3 fallback analysis matching the shared contract."""
         metadata = AnalysisMetadata(
             filename=filename,
             duration=duration,
@@ -685,27 +959,42 @@ class AnalyzerService:
 
         chord_diagrams = synthesize_chord_diagrams(chords)
         tablature = synthesize_tablature(chords)
+        arrangements = [
+            synthesize_arrangement_variation(
+                chords=chords,
+                style="Fingerstyle",
+                difficulty="Intermediate",
+                capo=0,
+                tempo_scale=1.0,
+                is_default=True,
+            )
+        ]
 
-        return metadata, chords, improvisations, chord_diagrams, tablature
+        return metadata, chords, improvisations, chord_diagrams, tablature, arrangements
 
     async def process_audio_upload(self, file: UploadFile) -> AnalysisResponse:
         """Process an uploaded audio file, execute/fallback analysis, and store the result."""
         job_id = str(uuid.uuid4())
         original_filename = file.filename or "audio.mp3"
 
-        # Stream and save audio to temporary file
         temp_path, _ = await self.save_temp_upload(file)
 
         try:
             duration = self.extract_audio_duration(temp_path, original_filename)
 
-            # Execute LangGraph audio-engine orchestrator in a worker thread
             engine_result = await anyio.to_thread.run_sync(
                 self._run_audio_engine, temp_path, original_filename
             )
 
             if engine_result is not None:
-                metadata, chords, improvisations, chord_diagrams, tablature = engine_result
+                (
+                    metadata,
+                    chords,
+                    improvisations,
+                    chord_diagrams,
+                    tablature,
+                    arrangements,
+                ) = engine_result
             else:
                 (
                     metadata,
@@ -713,6 +1002,7 @@ class AnalyzerService:
                     improvisations,
                     chord_diagrams,
                     tablature,
+                    arrangements,
                 ) = self.generate_fallback_analysis(original_filename, duration)
 
             response = AnalysisResponse(
@@ -723,19 +1013,82 @@ class AnalyzerService:
                 improvisations=improvisations,
                 chord_diagrams=chord_diagrams,
                 tablature=tablature,
+                arrangements=arrangements,
             )
 
-            # Store result in job repository
             self.save_job(response)
             return response
 
         finally:
-            # Ensure cleanup of temporary file
             if temp_path.exists():
                 try:
                     temp_path.unlink()
                 except OSError as err:
                     logger.warning("Could not delete temporary file %s: %s", temp_path, err)
+
+    def generate_arrangement(
+        self, job_id: str, request: ArrangementRequest
+    ) -> ArrangementVariation:
+        """Generate a new style/difficulty ArrangementVariation and persist it on the job."""
+        job = self.get_job(job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "JOB_NOT_FOUND",
+                    "message": f"Analysis job '{job_id}' not found.",
+                    "details": {"job_id": job_id},
+                },
+            )
+
+        variation: Optional[ArrangementVariation] = None
+        try:
+            _ensure_audio_engine_path()
+            from engine import arranger as engine_arranger  # type: ignore
+
+            if hasattr(engine_arranger, "generate_arrangement"):
+                raw_var = engine_arranger.generate_arrangement(
+                    chords=[c.model_dump() for c in job.chords],
+                    style=request.style,
+                    difficulty=request.difficulty,
+                    capo=request.capo,
+                    tempo_scale=request.tempo_scale,
+                    tuning=job.tablature.tuning,
+                )
+                if raw_var:
+                    variation = (
+                        raw_var
+                        if isinstance(raw_var, ArrangementVariation)
+                        else ArrangementVariation.model_validate(raw_var)
+                    )
+                    variation.tablature = self._normalize_tablature(variation.tablature)
+        except Exception as exc:
+            logger.debug("Using internal deterministic arrangement generator (%s)", exc)
+
+        if variation is None:
+            variation = synthesize_arrangement_variation(
+                chords=job.chords,
+                style=request.style,
+                difficulty=request.difficulty,
+                capo=request.capo,
+                tempo_scale=request.tempo_scale,
+                tuning=job.tablature.tuning,
+                is_default=False,
+            )
+
+        updated_arrangements = list(job.arrangements)
+        replaced = False
+        for idx, existing in enumerate(updated_arrangements):
+            if existing.arrangement_id == variation.arrangement_id:
+                updated_arrangements[idx] = variation
+                replaced = True
+                break
+        if not replaced:
+            updated_arrangements.append(variation)
+
+        updated_job = job.model_copy(update={"arrangements": updated_arrangements})
+        self.save_job(updated_job)
+        return variation
 
     def update_tablature(
         self, job_id: str, update_req: TablatureUpdateRequest
@@ -780,6 +1133,8 @@ class AnalyzerService:
                         note.string = edit.string
                         note.fret = edit.fret
                         note.technique = edit.technique
+                        if edit.voice is not None:
+                            note.voice = edit.voice
                         if edit.start_time is not None:
                             note.start_time = edit.start_time
                         if edit.duration is not None:
@@ -809,6 +1164,7 @@ class AnalyzerService:
                             note_name=note_name,
                             confidence=1.0,
                             technique=edit.technique,
+                            voice=infer_voice_role(edit.string, edit.voice),
                         )
                     )
 
@@ -835,6 +1191,7 @@ class AnalyzerService:
                 )
                 note.midi = midi_val
                 note.note_name = note_name
+                note.voice = infer_voice_role(note.string, note.voice)
 
         # Regenerate 6-line ASCII tab
         current_tab.ascii_tab = render_ascii_tab(current_tab.measures, current_tab.tuning)
