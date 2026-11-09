@@ -1,6 +1,6 @@
 """LangGraph orchestration pipeline for audio analysis, guitar intelligence, chord voicings, tablature transcription, AI style arrangements, and multi-format symbolic exports."""
 
-from typing import TypedDict, List, Dict, Any, Optional, Union, Literal
+from typing import TypedDict, List, Dict, Any, Optional, Union, Literal, Callable
 import os
 import json
 import numpy as np
@@ -42,6 +42,106 @@ ArrangementStyle = Literal[
 ]
 ExportFormat = Literal["midi", "musicxml", "ascii", "pdf"]
 VoiceRole = Literal["melody", "bass", "harmony", "percussive"]
+
+PipelineStage = Literal[
+    "queued",
+    "separating_stems",
+    "detecting_key_tempo",
+    "detecting_chords",
+    "transcribing_tablature",
+    "generating_arrangement",
+    "completed",
+    "failed",
+]
+StageStatus = Literal["pending", "in_progress", "completed", "skipped", "failed"]
+
+
+class PipelineStepInfo(BaseModel):
+    """Progress status and detail for an individual pipeline execution stage."""
+    model_config = ConfigDict(extra="ignore")
+
+    stage: PipelineStage = Field(..., description="Pipeline execution stage identifier")
+    label: str = Field(..., description="Human-readable stage label")
+    status: StageStatus = Field(
+        default="pending",
+        description="Current stage status ('pending', 'in_progress', 'completed', 'skipped', 'failed')",
+    )
+    progress_percent: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Stage-level completion percentage (0 to 100)",
+    )
+    detail: Optional[str] = Field(
+        default=None,
+        description="Optional stage execution details, notes, or diagnostic message",
+    )
+
+
+CANONICAL_PIPELINE_STAGES: List[str] = [
+    "separating_stems",
+    "detecting_key_tempo",
+    "detecting_chords",
+    "transcribing_tablature",
+    "generating_arrangement",
+]
+
+CANONICAL_STAGE_LABELS: Dict[str, str] = {
+    "separating_stems": "Separating Audio Stems (Demucs)",
+    "detecting_key_tempo": "Detecting Musical Key & Tempo",
+    "detecting_chords": "Recognizing Chords & Improvisations",
+    "transcribing_tablature": "Transcribing Guitar Tablature (Basic Pitch + Viterbi)",
+    "generating_arrangement": "Generating Fingerstyle Arrangement",
+}
+
+
+def create_initial_pipeline_steps() -> List[Dict[str, Any]]:
+    """Return default pending telemetry list for all 5 canonical stages."""
+    return [
+        {
+            "stage": stage,
+            "label": CANONICAL_STAGE_LABELS[stage],
+            "status": "pending",
+            "progress_percent": 0,
+            "detail": None,
+        }
+        for stage in CANONICAL_PIPELINE_STAGES
+    ]
+
+
+def safe_emit_progress(
+    callback: Optional[Callable[[str, int, str, Optional[str]], None]],
+    stage: str,
+    percent: int,
+    message: str,
+    detail: Optional[str] = None,
+) -> None:
+    """Safely invoke progress callback, ignoring any callback exception."""
+    if callback is not None:
+        try:
+            callback(stage, percent, message, detail)
+        except Exception:
+            # UI callback errors must never crash audio DSP analysis
+            pass
+
+
+def update_step_telemetry(
+    steps: Optional[List[Dict[str, Any]]],
+    stage: str,
+    status: str,
+    progress_percent: int,
+    detail: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return updated copy of pipeline step telemetry with updated status, percent, and detail."""
+    current = [dict(s) for s in (steps or create_initial_pipeline_steps())]
+    for step in current:
+        if step.get("stage") == stage:
+            step["status"] = status
+            step["progress_percent"] = progress_percent
+            if detail is not None:
+                step["detail"] = detail
+            break
+    return current
 
 
 class AudioMetadata(BaseModel):
@@ -245,6 +345,7 @@ class AnalysisOutput(BaseModel):
     chord_diagrams: List[ChordDiagram] = Field(default_factory=list)
     tablature: TablatureData = Field(default_factory=TablatureData)
     arrangements: List[ArrangementVariation] = Field(default_factory=list)
+    pipeline_steps: Optional[List[Dict[str, Any]]] = Field(default=None)
 
 
 # ============================================================================
@@ -255,6 +356,8 @@ class PipelineState(TypedDict, total=False):
     """Internal StateGraph state container."""
     file_path: str
     filename: str
+    progress_callback: Optional[Callable[[str, int, str, Optional[str]], None]]
+    pipeline_steps: List[Dict[str, Any]]
     y: Any
     sr: int
     duration: float
@@ -283,8 +386,86 @@ class PipelineState(TypedDict, total=False):
 # Pipeline Nodes
 # ============================================================================
 
+def stem_separation_node(state: PipelineState) -> Dict[str, Any]:
+    """Node 1: StemSeparationNode - Demucs 4-stem source separation and harmonic mix routing."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
+    # Milestone 1: 10%
+    safe_emit_progress(
+        cb,
+        stage="separating_stems",
+        percent=10,
+        message="Separating audio stems...",
+        detail="Isolating guitar and bass tracks...",
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="separating_stems",
+        status="in_progress",
+        progress_percent=40,
+        detail="Isolating guitar and bass tracks...",
+    )
+
+    file_path = state["file_path"]
+    separator = DemucsStemSeparator()
+    sep_result = separator.separate(file_path)
+
+    is_sep = bool(sep_result.get("is_separated", False))
+    stem_status = "completed" if is_sep else "skipped"
+    stem_detail = (
+        "Demucs 4-stem separation performed (status='completed')"
+        if is_sep
+        else "Demucs 4-stem separation fast-skipped (status='skipped')"
+    )
+
+    # Milestone 2: 25%
+    safe_emit_progress(
+        cb,
+        stage="separating_stems",
+        percent=25,
+        message="Audio stems separated" if is_sep else "Audio stems processed",
+        detail=stem_detail,
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="separating_stems",
+        status=stem_status,
+        progress_percent=100,
+        detail=stem_detail,
+    )
+
+    return {
+        "guitar_stem": sep_result["guitar_stem"],
+        "harmonic_mix": sep_result["harmonic_mix"],
+        "bass_stem": sep_result["bass_stem"],
+        "stem_dir": sep_result["stem_dir"],
+        "is_separated": is_sep,
+        "pipeline_steps": steps,
+    }
+
+
 def audio_loader_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 1: AudioLoaderNode - Loads audio file, extracts duration and basic stats."""
+    """Node 2: AudioLoaderNode - Loads audio file, extracts duration and basic stats."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
+    # Milestone 3: 30%
+    safe_emit_progress(
+        cb,
+        stage="detecting_key_tempo",
+        percent=30,
+        message="Analyzing audio signal, tempo, and musical key...",
+        detail="Loading audio waveform and analyzing audio signal...",
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="detecting_key_tempo",
+        status="in_progress",
+        progress_percent=25,
+        detail="Loading audio waveform and analyzing audio signal...",
+    )
+
     file_path = state["file_path"]
     filename = state.get("filename") or os.path.basename(file_path)
 
@@ -302,28 +483,18 @@ def audio_loader_node(state: PipelineState) -> Dict[str, Any]:
         "y": y,
         "sr": sr,
         "duration": round(duration, 2),
-    }
-
-
-def stem_separation_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 2: StemSeparationNode - Demucs 4-stem source separation and harmonic mix routing."""
-    file_path = state["file_path"]
-    separator = DemucsStemSeparator()
-    sep_result = separator.separate(file_path)
-
-    return {
-        "guitar_stem": sep_result["guitar_stem"],
-        "harmonic_mix": sep_result["harmonic_mix"],
-        "bass_stem": sep_result["bass_stem"],
-        "stem_dir": sep_result["stem_dir"],
-        "is_separated": sep_result["is_separated"],
+        "pipeline_steps": steps,
     }
 
 
 def key_and_tempo_node(state: PipelineState) -> Dict[str, Any]:
     """Node 3: KeyAndTempoNode - Computes BPM, beat grid, and detects musical key."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
     y = state["y"]
     sr = state["sr"]
+    duration = state.get("duration", 0.0)
 
     processor = AudioProcessor(sample_rate=sr)
     bpm, beat_frames, beat_times = processor.detect_beats(y, sr)
@@ -348,6 +519,24 @@ def key_and_tempo_node(state: PipelineState) -> Dict[str, Any]:
 
     # Format BPM cleanly as integer for consistent UI and API schema contract
     formatted_bpm = max(1, int(round(bpm)))
+    key_str = key_result["key"]
+
+    # Milestone 4: 40%
+    key_detail = f"Detected {key_str} at {formatted_bpm} BPM ({duration}s)"
+    safe_emit_progress(
+        cb,
+        stage="detecting_key_tempo",
+        percent=40,
+        message="Key and tempo analysis complete",
+        detail=key_detail,
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="detecting_key_tempo",
+        status="completed",
+        progress_percent=100,
+        detail=key_detail,
+    )
 
     return {
         "bpm": formatted_bpm,
@@ -356,11 +545,31 @@ def key_and_tempo_node(state: PipelineState) -> Dict[str, Any]:
         "beat_times": beat_times,
         "key": key_result["key"],
         "key_confidence": key_result["confidence"],
+        "pipeline_steps": steps,
     }
 
 
 def chord_detection_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 3: ChordDetectionNode - Segments chromagram and matches chord templates."""
+    """Node 4: ChordDetectionNode - Segments chromagram and matches chord templates."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
+    # Milestone 5: 45%
+    safe_emit_progress(
+        cb,
+        stage="detecting_chords",
+        percent=45,
+        message="Recognizing chord progression and voicings...",
+        detail="Segmenting chromagram and matching guitar chord templates...",
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="detecting_chords",
+        status="in_progress",
+        progress_percent=25,
+        detail="Segmenting chromagram and matching guitar chord templates...",
+    )
+
     chroma = state["chroma"]
     duration = state["duration"]
     beat_times = state.get("beat_times")
@@ -372,11 +581,11 @@ def chord_detection_node(state: PipelineState) -> Dict[str, Any]:
         beat_times=beat_times,
     )
 
-    return {"chords": chords}
+    return {"chords": chords, "pipeline_steps": steps}
 
 
 def improvisation_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 4: ImprovisationNode - Generates style-based substitutions."""
+    """Node 5: ImprovisationNode - Generates style-based substitutions."""
     chords = state["chords"]
     key = state["key"]
     styles = state.get("styles") or ["Neo Soul"]
@@ -392,7 +601,10 @@ def improvisation_node(state: PipelineState) -> Dict[str, Any]:
 
 
 def chord_diagram_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 5: ChordDiagramNode - Resolves 6-string guitar chord voicing diagrams."""
+    """Node 6: ChordDiagramNode - Resolves 6-string guitar chord voicing diagrams."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
     chords = state.get("chords") or []
     improvisations = state.get("improvisations") or []
 
@@ -402,11 +614,47 @@ def chord_diagram_node(state: PipelineState) -> Dict[str, Any]:
         improvisations=improvisations,
     )
 
-    return {"chord_diagrams": diagrams}
+    # Milestone 6: 60%
+    chord_detail = f"Detected {len(chords)} chord segments and style voicings"
+    safe_emit_progress(
+        cb,
+        stage="detecting_chords",
+        percent=60,
+        message="Chord progression and voicings recognized",
+        detail=chord_detail,
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="detecting_chords",
+        status="completed",
+        progress_percent=100,
+        detail=chord_detail,
+    )
+
+    return {"chord_diagrams": diagrams, "pipeline_steps": steps}
 
 
 def tab_transcription_node(state: PipelineState) -> Dict[str, Any]:
     """Node 7: TabTranscriptionNode - Transcribes notes, solves fretboard path, builds measures and ASCII tab."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
+    # Milestone 7: 65%
+    safe_emit_progress(
+        cb,
+        stage="transcribing_tablature",
+        percent=65,
+        message="Transcribing guitar tablature and mapping fretboard...",
+        detail="Extracting polyphonic notes and solving Viterbi fretboard paths...",
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="transcribing_tablature",
+        status="in_progress",
+        progress_percent=20,
+        detail="Extracting polyphonic notes and solving Viterbi fretboard paths...",
+    )
+
     y = state["y"]
     sr = state["sr"]
     duration = state["duration"]
@@ -435,11 +683,51 @@ def tab_transcription_node(state: PipelineState) -> Dict[str, Any]:
         audio_path=guitar_stem,
     )
 
-    return {"tablature": tablature}
+    measures = tablature.get("measures", [])
+    total_notes = sum(len(m.get("notes", [])) for m in measures)
+    difficulty = tablature.get("difficulty", "Beginner")
+
+    # Milestone 8: 85%
+    tab_detail = f"Mapped {total_notes} notes across {len(measures)} measures ({difficulty})"
+    safe_emit_progress(
+        cb,
+        stage="transcribing_tablature",
+        percent=85,
+        message="Guitar tablature transcribed",
+        detail=tab_detail,
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="transcribing_tablature",
+        status="completed",
+        progress_percent=100,
+        detail=tab_detail,
+    )
+
+    return {"tablature": tablature, "pipeline_steps": steps}
 
 
 def arrangement_generator_node(state: PipelineState) -> Dict[str, Any]:
     """Node 8: ArrangementGeneratorNode - Synthesizes default Fingerstyle solo arrangement (Phase 3)."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
+    # Milestone 9: 90%
+    safe_emit_progress(
+        cb,
+        stage="generating_arrangement",
+        percent=90,
+        message="Generating polyphonic Fingerstyle arrangement...",
+        detail="Synthesizing alternating thumb bassline and chord melody...",
+    )
+    steps = update_step_telemetry(
+        steps,
+        stage="generating_arrangement",
+        status="in_progress",
+        progress_percent=50,
+        detail="Synthesizing alternating thumb bassline and chord melody...",
+    )
+
     metadata = {
         "filename": state.get("filename", "audio.wav"),
         "duration": state.get("duration", 4.8),
@@ -473,11 +761,26 @@ def arrangement_generator_node(state: PipelineState) -> Dict[str, Any]:
     return {
         "arrangements": [default_fingerstyle],
         "chord_diagrams": existing_diagrams,
+        "pipeline_steps": steps,
     }
 
 
 def output_validator_node(state: PipelineState) -> Dict[str, Any]:
-    """Node 9: OutputValidatorNode - Validates schema and compiles final payload."""
+    """Node 9: OutputValidatorNode - Validates schema, compiles final payload, and emits completion."""
+    cb = state.get("progress_callback")
+    steps = state.get("pipeline_steps")
+
+    arrangements = state.get("arrangements") or []
+    arr_count = len(arrangements)
+    arr_detail = f"Synthesized {arr_count} playable arrangement variation(s)"
+    steps = update_step_telemetry(
+        steps,
+        stage="generating_arrangement",
+        status="completed",
+        progress_percent=100,
+        detail=arr_detail,
+    )
+
     payload = {
         "metadata": {
             "filename": state["filename"],
@@ -490,14 +793,26 @@ def output_validator_node(state: PipelineState) -> Dict[str, Any]:
         "improvisations": state["improvisations"],
         "chord_diagrams": state.get("chord_diagrams") or [],
         "tablature": state.get("tablature") or {},
-        "arrangements": state.get("arrangements") or [],
+        "arrangements": arrangements,
+        "pipeline_steps": steps,
     }
 
     # Validate strictly via Pydantic model
     validated = AnalysisOutput.model_validate(payload)
     output_dict = validated.model_dump()
+    output_dict["pipeline_steps"] = steps
 
-    return {"output": output_dict}
+    # Milestone 10: 100% completed
+    completed_detail = f"Audio analysis complete with {arr_count} arrangement(s) ready"
+    safe_emit_progress(
+        cb,
+        stage="completed",
+        percent=100,
+        message="Audio analysis complete",
+        detail=completed_detail,
+    )
+
+    return {"output": output_dict, "pipeline_steps": steps}
 
 
 # ============================================================================
@@ -509,8 +824,8 @@ def create_orchestrator():
     graph = StateGraph(PipelineState)
 
     # Register nodes
-    graph.add_node("AudioLoaderNode", audio_loader_node)
     graph.add_node("StemSeparationNode", stem_separation_node)
+    graph.add_node("AudioLoaderNode", audio_loader_node)
     graph.add_node("KeyAndTempoNode", key_and_tempo_node)
     graph.add_node("ChordDetectionNode", chord_detection_node)
     graph.add_node("ImprovisationNode", improvisation_node)
@@ -519,10 +834,16 @@ def create_orchestrator():
     graph.add_node("ArrangementGeneratorNode", arrangement_generator_node)
     graph.add_node("OutputValidatorNode", output_validator_node)
 
-    # Wire linear pipeline edges
-    graph.add_edge(START, "AudioLoaderNode")
-    graph.add_edge("AudioLoaderNode", "StemSeparationNode")
-    graph.add_edge("StemSeparationNode", "KeyAndTempoNode")
+    # Wire linear pipeline edges (Phase 4 canonical stage order):
+    # 1. separating_stems (0% -> 25%)
+    # 2. detecting_key_tempo (25% -> 40%)
+    # 3. detecting_chords (40% -> 60%)
+    # 4. transcribing_tablature (60% -> 85%)
+    # 5. generating_arrangement (85% -> 100%)
+    # 6. completed (100%)
+    graph.add_edge(START, "StemSeparationNode")
+    graph.add_edge("StemSeparationNode", "AudioLoaderNode")
+    graph.add_edge("AudioLoaderNode", "KeyAndTempoNode")
     graph.add_edge("KeyAndTempoNode", "ChordDetectionNode")
     graph.add_edge("ChordDetectionNode", "ImprovisationNode")
     graph.add_edge("ImprovisationNode", "ChordDiagramNode")
@@ -535,27 +856,57 @@ def create_orchestrator():
 
 
 def run_pipeline(
-    file_path: str,
+    audio_path: Optional[str] = None,
+    filename: Union[str, List[str], None] = "upload.mp3",
+    progress_callback: Optional[Callable[[str, int, str, Optional[str]], None]] = None,
     styles: Optional[List[str]] = None,
-    filename: Optional[str] = None,
+    file_path: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Execute the full audio analysis pipeline on a target audio file.
+    """Execute the full audio analysis pipeline with real-time stage progress reporting.
 
     Args:
-        file_path: Path to MP3/WAV audio file.
-        styles: Optional list of styles (e.g. ['Neo Soul', 'Jazz', 'Pop', 'Fingerstyle']).
-        filename: Optional original filename to preserve in output metadata.
+        audio_path: Path to MP3/WAV audio file.
+        filename: Original file name or display name (defaults to 'upload.mp3').
+        progress_callback: Optional callback invoked across pipeline milestones:
+            callback(stage: str, progress_percent: int, message: str, detail: Optional[str])
+        styles: Optional list of guitar styles for improvisation (e.g. ['Neo Soul']).
+        file_path: Backward-compatible alias for audio_path.
 
     Returns:
-        Clean, serialized dictionary matching the Phase 1 + Phase 2 + Phase 3 output specification.
+        Clean, serialized dictionary matching the Phase 1, Phase 2, Phase 3 & Phase 4 output specifications.
     """
+    target_path = audio_path or file_path or kwargs.get("path")
+    if not target_path:
+        raise ValueError("Audio path must be provided to run_pipeline.")
+
+    # Backward compatibility: if styles was passed positionally as 2nd arg: run_pipeline(path, ["Neo Soul"])
+    if isinstance(filename, list):
+        styles = filename
+        filename = None
+
+    if progress_callback is None and "callback" in kwargs:
+        progress_callback = kwargs["callback"]
+
+    # If filename is omitted or default "upload.mp3", preserve target_path basename if non-empty
+    resolved_filename: str
+    if filename is None:
+        resolved_filename = os.path.basename(target_path) or "upload.mp3"
+    elif filename == "upload.mp3" and os.path.basename(target_path) not in ("", "upload.mp3"):
+        resolved_filename = os.path.basename(target_path)
+    else:
+        resolved_filename = str(filename)
+
     app = create_orchestrator()
+    initial_steps = create_initial_pipeline_steps()
+
     initial_state: PipelineState = {
-        "file_path": file_path,
+        "file_path": target_path,
+        "filename": resolved_filename,
         "styles": styles if styles is not None else ["Neo Soul"],
+        "progress_callback": progress_callback,
+        "pipeline_steps": initial_steps,
     }
-    if filename:
-        initial_state["filename"] = filename
 
     stem_dir_to_clean: Optional[str] = None
     try:
