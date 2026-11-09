@@ -1,5 +1,5 @@
 /**
- * @arpegia/shared-types — Physical TypeScript Contracts (Phase 1, Phase 2 & Phase 3)
+ * @arpegia/shared-types — Physical TypeScript Contracts (Phase 1, Phase 2, Phase 3 & Phase 4)
  *
  * Canonical TypeScript interfaces shared across apps/web, apps/api, and services/audio-engine.
  * Mirrors packages/shared-types/schemas.py (Pydantic v2 reference models).
@@ -180,15 +180,57 @@ export interface ArrangementRequest {
   tempo_scale?: number; // default 1.0, range 0.5 to 1.5
 }
 
+// ============================================================================
+// Phase 4 Real-Time Async Pipeline Streaming Models
+// ============================================================================
+
+export type PipelineStage =
+  | 'queued'
+  | 'separating_stems'
+  | 'detecting_key_tempo'
+  | 'detecting_chords'
+  | 'transcribing_tablature'
+  | 'generating_arrangement'
+  | 'completed'
+  | 'failed';
+
+export type StageStatus = 'pending' | 'in_progress' | 'completed' | 'skipped' | 'failed';
+
+export interface PipelineStepInfo {
+  stage: PipelineStage;
+  label: string;
+  status: StageStatus;
+  progress_percent: number; // 0 to 100
+  detail?: string | null;
+}
+
+export type JobProgressEventType = 'job.progress' | 'job.completed' | 'job.failed';
+
+export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+export interface JobProgressEvent {
+  event: JobProgressEventType;
+  job_id: string;
+  status: JobStatus;
+  current_stage: PipelineStage;
+  overall_percent: number; // 0 to 100
+  message: string;
+  steps: PipelineStepInfo[];
+  updated_at: string; // ISO-8601 timestamp
+  result?: AnalysisResponse | null;
+  error?: Record<string, any> | ErrorDetail | null;
+}
+
 export interface AnalysisResponse {
   job_id: string;
-  status: 'completed' | 'processing' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed';
   metadata: SongMetadata;
   chords: ChordData[];
   improvisations: ImprovisationData[];
   chord_diagrams: ChordDiagram[];
   tablature: TablatureData;
   arrangements: ArrangementVariation[];
+  progress?: JobProgressEvent | null;
 }
 
 export interface ErrorDetail {

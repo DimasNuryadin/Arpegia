@@ -1,6 +1,6 @@
-# Arpegia Monorepo — Agent Rules & Directory Jail Specification (Phase 3)
+# Arpegia Monorepo — Agent Rules & Directory Jail Specification (Phase 4)
 
-This document defines the strict directory boundaries, read-only contract guarantees, and operational constraints for parallel autonomous agents working on **Arpegia Phase 3 (AI Music Intelligence: Fingerstyle & Style Arrangement Generator, Re-harmonization, and Multi-Format Export for MIDI, MusicXML/GuitarPro, and PDF)**.
+This document defines the strict directory boundaries, read-only contract guarantees, and operational constraints for parallel autonomous agents working on **Arpegia Phase 4 (Real-Time Async Pipeline Progress Streaming: Separating Stems -> Detecting Key & Chords -> Transcribing Guitar Tab -> Generating AI Arrangement -> Completed)**.
 
 ---
 
@@ -14,20 +14,36 @@ During Gate 2 parallel execution, each specialized agent is strictly confined to
 | **API Agent** | `apps/api/` | `apps/web/`, `services/audio-engine/`, `packages/`, `docs/`, `infrastructure/`, root files |
 | **Audio Engine Agent** | `services/audio-engine/` | `apps/web/`, `apps/api/`, `packages/`, `docs/`, `infrastructure/`, root files |
 
-### Specific Agent Responsibilities within Jails
+### Specific Agent Responsibilities within Jails (Phase 4)
+
 - **Web Agent (`apps/web/`):**
-  - Maintain all Phase 1 & Phase 2 UI capabilities (`ChordVoicingDiagram`, `TablatureViewer`, `InteractiveTabEditor`, `PUT /api/v1/analyze/{job_id}/tablature`).
-  - Implement Phase 3 UI components: Fingerstyle & Style Arrangement Generator studio (`POST /api/v1/analyze/{job_id}/arrange`), polyphonic voice role visualization (`melody`, `bass`, `harmony`, `percussive`), arrangement variation switcher (`arrangements`), and Multi-Format Export controls (`GET /api/v1/analyze/{job_id}/export` for `midi`, `musicxml`, `ascii`, and `pdf`).
-  - Consume physical contracts from `packages/shared-types/index.ts` (or mirror into `apps/web/src/types/index.ts` in strict alignment with `packages/shared-types/index.ts`).
+  - Maintain all Phase 1, Phase 2, and Phase 3 UI capabilities (`ChordVoicingDiagram`, `TablatureViewer`, `InteractiveTabEditor`, `ArrangementGenerator`, `MultiFormatExport`).
+  - Implement real-time pipeline progress streaming UI via WebSocket (`ws://localhost:8000/ws/analyze/{job_id}`) with automatic fallback to HTTP polling (`GET /api/v1/analyze/{job_id}/progress`) using `ARPEGIA_ASYNC_POLL_INTERVAL_MS` (default `800` ms).
+  - Add `async_mode=true` query parameter support to `POST /api/v1/analyze?async_mode=true` upon audio upload, immediately switching to the progress streaming view upon receiving `202 Accepted` / `200 OK` with the initial `JobProgressEvent` / `job_id`.
+  - Render the 5 ordered pipeline stages with animated progress indicators, overall percentage bar (`0%` -> `100%`), step status badges (`pending`, `in_progress`, `completed`, `skipped`, `failed`), and dynamic step details (`detail`).
+  - Gracefully transition into completed analysis state upon receiving `job.completed` with the full `result: AnalysisResponse`, or display structured error banner on `job.failed`.
+  - Consume physical contracts from `packages/shared-types/index.ts` (or mirror into `apps/web/src/types/index.ts` in strict alignment).
+
 - **API Agent (`apps/api/`):**
-  - Mirror and/or import the Pydantic v2 contracts from `packages/shared-types/schemas.py` into `apps/api/app/schemas/analysis.py`.
-  - Extend `POST /api/v1/analyze`, `GET /api/v1/analyze/{job_id}`, and `PUT /api/v1/analyze/{job_id}/tablature` to include `arrangements: List[ArrangementVariation]` (with at least 1 default Fingerstyle arrangement generated during analysis).
-  - Implement `POST /api/v1/analyze/{job_id}/arrange` accepting `ArrangementRequest` (`style`, `difficulty`, `capo`, `tempo_scale`), returning the newly generated `ArrangementVariation` (`200 OK`), and appending/updating it in the stored job's `arrangements` list.
-  - Implement `GET /api/v1/analyze/{job_id}/export` accepting query params `format` (`midi` | `musicxml` | `ascii` | `pdf`) and optional `arrangement_id`, returning the binary/text stream with the canonical `Content-Type` and `Content-Disposition: attachment; filename="arpegia-<job_id>.<ext>"`.
+  - Maintain 100% backward compatibility for synchronous `POST /api/v1/analyze` (`async_mode=false` or omitted), executing the pipeline and returning `200 OK` with complete `AnalysisResponse`.
+  - Implement async analysis mode `POST /api/v1/analyze?async_mode=true`, returning `202 Accepted` (or `200 OK`) with initial `JobProgressEvent` / `job_id` and launching background execution.
+  - Implement HTTP polling endpoint `GET /api/v1/analyze/{job_id}/progress`, returning the latest `JobProgressEvent` snapshot.
+  - Implement WebSocket endpoint `WS /ws/analyze/{job_id}` on Port `8000`, pushing real-time `JobProgressEvent` frames whenever the progress callback fires, closing cleanly on `job.completed` or `job.failed`.
+  - Wire `services/audio-engine`'s `run_pipeline(..., progress_callback=...)` to update job progress state and broadcast events to connected WebSocket clients and polling cache.
+  - Mirror/import Pydantic v2 contracts from `packages/shared-types/schemas.py` into `apps/api/app/schemas/analysis.py`.
+
 - **Audio Engine Agent (`services/audio-engine/`):**
-  - Maintain Phase 1 & Phase 2 DSP, chord diagram resolution (`ChordDiagram`), and biomechanical fretboard mapping (`TabNote`, `TabMeasure`, `TablatureData`, `ascii_tab`).
-  - Implement Phase 3 polyphonic voice separation (`VoiceRole`: `"melody"`, `"bass"`, `"harmony"`, `"percussive"`), style-aware arrangement synthesis (`ArrangementVariation` for `"Fingerstyle"`, `"Neo Soul"`, `"Jazz Chord Melody"`, and `"Acoustic Strumming"`), re-harmonization, and multi-format exporters (`midi`, `musicxml`, `ascii`, `pdf`).
-  - Extend the LangGraph pipeline (`engine/orchestrator.py`) to populate `arrangements` (with at least 1 default Fingerstyle arrangement) conforming strictly to `packages/shared-types/schemas.py`.
+  - Maintain Phase 1, Phase 2, and Phase 3 audio signal processing (Librosa), chord diagram resolution (`ChordDiagram`), biomechanical fretboard tab generation (`TablatureData`), style arrangement synthesis (`ArrangementVariation`), and multi-format exporters (`midi`, `musicxml`, `ascii`, `pdf`).
+  - Extend `run_pipeline` in `engine/orchestrator.py` to accept the canonical progress callback signature:
+    `run_pipeline(audio_path: str, filename: str = "upload.mp3", progress_callback: Optional[Callable[[str, int, str, Optional[str]], None]] = None) -> dict`
+    where the callback receives `(stage: str, progress_percent: int, message: str, detail: Optional[str])`.
+  - Implement progress milestone emissions across the 5 canonical pipeline stages:
+    1. `separating_stems` (0% -> 25%): Demucs 4-stem source separation (or fast-skip if disabled).
+    2. `detecting_key_tempo` (25% -> 40%): Audio loading, BPM, and Krumhansl-Schmuckler key detection.
+    3. `detecting_chords` (40% -> 60%): Chromagram chord recognition, voicings & style improvisations.
+    4. `transcribing_tablature` (60% -> 85%): Basic Pitch polyphonic extraction & Viterbi fretboard mapping.
+    5. `generating_arrangement` (85% -> 100%): Polyphonic Fingerstyle arrangement & final output validation.
+  - Ensure the pipeline operates 100% offline/deterministically without external API dependencies.
 
 ---
 
@@ -61,7 +77,7 @@ All agents and services must adhere to the following port assignments:
 | Service | Directory | Port | Base URL / Endpoint |
 | :--- | :--- | :--- | :--- |
 | **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
-| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000` (`/api/v1/analyze`) |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000` (`/api/v1/analyze`, `/ws/analyze/{job_id}`) |
 | **Audio Engine (Library / Worker)** | `services/audio-engine/` | N/A (In-process / Worker) | Invoked by `apps/api` or CLI |
 
 ---
