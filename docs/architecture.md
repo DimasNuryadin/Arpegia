@@ -1,8 +1,8 @@
-# Arpegia Monorepo Architecture & Package Boundaries (Phase 1, Phase 2 & Phase 3)
+# Arpegia Monorepo Architecture & Package Boundaries (Phase 1, Phase 2, Phase 3 & Phase 4)
 
 ## 1. System Overview
 
-Arpegia is an AI-powered Guitar Intelligence Platform engineered to ingest audio files (MP3/WAV), extract musical key, tempo, and chord progressions, synthesize biomechanically realistic guitar tablature (`TablatureData`), generate 6-string chord voicing diagrams (`ChordDiagram`), enable interactive fretboard & tab editing, synthesize polyphonic style & fingerstyle arrangements (`ArrangementVariation`), perform genre-aware re-harmonization, and export playable scores to MIDI, MusicXML/GuitarPro, ASCII Tab, and PDF.
+Arpegia is an AI-powered Guitar Intelligence Platform engineered to ingest audio files (MP3/WAV), extract musical key, tempo, and chord progressions, synthesize biomechanically realistic guitar tablature (`TablatureData`), generate 6-string chord voicing diagrams (`ChordDiagram`), enable interactive fretboard & tab editing, synthesize polyphonic style & fingerstyle arrangements (`ArrangementVariation`), perform genre-aware re-harmonization, export playable scores to MIDI, MusicXML/GuitarPro, ASCII Tab, and PDF, and stream real-time pipeline execution progress via WebSockets and HTTP polling.
 
 The repository is organized as a multi-package monorepo designed for clean boundary separation and conflict-free parallel development across multiple specialized agents.
 
@@ -14,7 +14,7 @@ The repository is organized as a multi-package monorepo designed for clean bound
 arpegia/
 ├── apps/
 │   ├── web/                  # Next.js App Router (TypeScript, Tailwind, React 19) — Port 3000
-│   └── api/                  # Python FastAPI REST Gateway — Port 8000
+│   └── api/                  # Python FastAPI REST & WebSocket Gateway — Port 8000
 ├── services/
 │   └── audio-engine/         # Python DSP (Librosa, FFmpeg), Tab & Arrangement Synthesizer, Exporters & LangGraph AI
 ├── packages/
@@ -23,7 +23,7 @@ arpegia/
 │   └── docker/               # Dedicated Dockerfiles for each service
 ├── docs/
 │   ├── architecture.md       # System architecture & agent boundary specifications
-│   └── api-contract.md       # Canonical Phase 1, Phase 2 & Phase 3 REST & schema contracts
+│   └── api-contract.md       # Canonical Phase 1, Phase 2, Phase 3 & Phase 4 REST & schema contracts
 ├── AGENT_RULES.md            # Strict Gate 2 directory jail & read-only enforcement rules
 ├── docker-compose.yml        # Local development orchestration
 ├── .env.example              # Canonical environment variable specifications
@@ -33,61 +33,81 @@ arpegia/
 
 ### Canonical Port Registry
 
-| Service | Directory | Port | Base URL |
+| Service | Directory | Port | Base URL / Protocols |
 | :--- | :--- | :--- | :--- |
 | **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
-| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000` |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`ws://localhost:8000/ws/analyze/{job_id}` |
 | **Audio Engine (DSP & LangGraph)** | `services/audio-engine/` | In-process / Worker | Invoked by `apps/api` or CLI |
 
 ### Boundary Guidelines for Parallel Agents (Gate 2)
 
 | Path | Primary Language | Boundary Scope & Responsibilities | Allowed Cross-Imports |
 | :--- | :--- | :--- | :--- |
-| **`apps/web`** | TypeScript / React | User interface, audio timeline, `ChordDiagram` visualizer, `TablatureData` viewer, Interactive Tab Editor (`PUT /api/v1/analyze/{job_id}/tablature`), Phase 3 Style & Fingerstyle Arrangement Generator (`POST /api/v1/analyze/{job_id}/arrange`), polyphonic `VoiceRole` color-coding, and Multi-Format Export (`GET /api/v1/analyze/{job_id}/export` for `midi`, `musicxml`, `ascii`, `pdf`). | Consumes `@arpegia/shared-types`. Must **never** modify `packages/` or backend Python files during Gate 2. |
-| **`apps/api`** | Python (FastAPI) | HTTP routing (`POST /api/v1/analyze`, `GET /api/v1/analyze/{job_id}`, `PUT /api/v1/analyze/{job_id}/tablature`, `POST /api/v1/analyze/{job_id}/arrange`, `GET /api/v1/analyze/{job_id}/export`), Pydantic validation, job persistence, and `services/audio-engine` orchestration. | References `packages/shared-types/schemas.py` and invokes `services/audio-engine`. |
-| **`services/audio-engine`** | Python | Core audio signal processing (Librosa), key/BPM/chord detection, polyphonic/monophonic note transcription, biomechanical guitar fret-string optimization (`TabNote`, `TabMeasure`, `ascii_tab`), chord diagram resolution (`ChordDiagram`), Phase 3 polyphonic voice separation (`VoiceRole`), style arrangement generator (`ArrangementVariation`), re-harmonization, multi-format exporters (`midi`, `musicxml`, `ascii`, `pdf`), and LangGraph music intelligence. | Operates as a modular processing engine invoked by `apps/api` or standalone CLI. |
+| **`apps/web`** | TypeScript / React | User interface, audio timeline, `ChordDiagram` visualizer, `TablatureData` viewer, Interactive Tab Editor, Phase 3 Style Arrangement Generator, Multi-Format Export, and Phase 4 Real-Time Pipeline Streaming UI (WebSocket connection with automatic HTTP polling fallback). | Consumes `@arpegia/shared-types`. Must **never** modify `packages/` or backend Python files during Gate 2. |
+| **`apps/api`** | Python (FastAPI) | HTTP & WebSocket routing (`POST /api/v1/analyze`, `GET /api/v1/analyze/{job_id}`, `GET /api/v1/analyze/{job_id}/progress`, `WS /ws/analyze/{job_id}`, `PUT /api/v1/analyze/{job_id}/tablature`, `POST /api/v1/analyze/{job_id}/arrange`, `GET /api/v1/analyze/{job_id}/export`), background task lifecycle, and `services/audio-engine` orchestration. | References `packages/shared-types/schemas.py` and invokes `services/audio-engine`. |
+| **`services/audio-engine`** | Python | Core audio signal processing (Librosa), key/BPM/chord detection, polyphonic/monophonic note transcription, biomechanical guitar fret-string optimization (`TabNote`, `TabMeasure`, `ascii_tab`), chord diagram resolution (`ChordDiagram`), Phase 3 polyphonic voice separation (`VoiceRole`), style arrangement generator (`ArrangementVariation`), multi-format exporters, and LangGraph pipeline orchestration with real-time `progress_callback` across the 5 pipeline stages. | Operates as a modular processing engine invoked by `apps/api` or standalone CLI. |
 | **`packages/shared-types`** | TypeScript & Python | **READ-ONLY in Gate 2.** Source of truth for TypeScript interfaces (`index.ts`) and Python Pydantic v2 schemas (`schemas.py`). | Imported/mirrored by `apps/web`, `apps/api`, and `services/audio-engine`. |
 | **`infrastructure/`** | Docker / Compose | Containerization scripts and system setup. | References app files from build contexts. |
 
 ---
 
-## 3. Phase 3 Communication Flows
+## 3. Phase 4 Communication & Streaming Flows
 
 ```
 [apps/web (Next.js :3000)]
        │
-       ├──── (1) POST /api/v1/analyze (Multipart MP3/WAV) ─────────► [apps/api (FastAPI :8000)]
-       │                                                                    │
-       │                                                                    ▼ (2) Run Pipeline
-       │                                                            [services/audio-engine]
-       │                                                             ├─ KeyAndTempoNode
-       │                                                             ├─ ChordDetectionNode
-       │                                                             ├─ ImprovisationNode
-       │                                                             ├─ ChordDiagramNode
-       │                                                             ├─ TablatureGenerationNode
-       │                                                             └─ ArrangementGenerationNode
-       │                                                                    │
-       │◄─── (3) AnalysisResponse (chords, diagrams, tablature, ◄───────────┘
-       │         arrangements [default Fingerstyle variation])
+       │── (1) POST /api/v1/analyze?async_mode=true (MP3/WAV) ──► [apps/api (FastAPI :8000)]
+       │◄─ (2) 202 Accepted { job_id, event: "job.progress" } ───┤ (Spawns background task)
+       │                                                         │
+       │── (3) WS connect: /ws/analyze/{job_id} ────────────────►│ (FastAPI WebSocket Route)
+       │   (or fallback: GET /api/v1/analyze/{job_id}/progress)  │
+       │                                                         ▼ (4) run_pipeline(..., progress_callback)
+       │                                                 [services/audio-engine]
+       │                                                  ├─ (0%-25%)   separating_stems
+       │                                                  ├─ (25%-40%)  detecting_key_tempo
+       │                                                  ├─ (40%-60%)  detecting_chords
+       │                                                  ├─ (60%-85%)  transcribing_tablature
+       │                                                  └─ (85%-100%) generating_arrangement
+       │                                                         │
+       │◄─ (5) WS Frame: JobProgressEvent ("job.progress") ◄─────┤ (Progress callback updates)
+       │◄─ (6) WS Final: JobProgressEvent ("job.completed") ◄────┘ (Contains full AnalysisResponse result)
+       │       (WebSocket cleanly closed by server)
        │
-       ├──── (4) PUT /api/v1/analyze/{job_id}/tablature ───────────► [apps/api (FastAPI :8000)]
-       │     (Interactive Tab Editor validates string/fret/technique        │
-       │      edits, recomputes MIDI/note_name & regenerates ascii_tab) ◄───┘
+       ├── (7) PUT /api/v1/analyze/{job_id}/tablature ──────────► [apps/api (FastAPI :8000)]
+       │       (Interactive Tab Editor updates note/measure)
        │
-       ├──── (5) POST /api/v1/analyze/{job_id}/arrange ────────────► [apps/api (FastAPI :8000)]
-       │     (ArrangementRequest: style, difficulty, capo, tempo_scale)     │
-       │◄─── Returns ArrangementVariation & appends to job.arrangements ◄───┘
+       ├── (8) POST /api/v1/analyze/{job_id}/arrange ───────────► [apps/api (FastAPI :8000)]
+       │       (Generates custom style arrangement variation)
        │
-       └──── (6) GET /api/v1/analyze/{job_id}/export ──────────────► [apps/api (FastAPI :8000)]
-             (?format=midi|musicxml|ascii|pdf&arrangement_id=...)           │
-             Returns downloadable stream (arpegia-<job_id>.<ext>) ◄─────────┘
+       └── (9) GET /api/v1/analyze/{job_id}/export ─────────────► [apps/api (FastAPI :8000)]
+               (?format=midi|musicxml|ascii|pdf&arrangement_id=...)
 ```
 
-1. **Audio Upload & Guitar Intelligence Analysis (`POST /api/v1/analyze`):** `apps/web` uploads an audio file to `apps/api`, which invokes `services/audio-engine` (with deterministic fallback) to return `AnalysisResponse` containing `metadata`, `chords`, `improvisations`, `chord_diagrams`, `tablature`, and `arrangements` (pre-populated with at least 1 default `"Fingerstyle"` arrangement variation).
-2. **Job Retrieval (`GET /api/v1/analyze/{job_id}`):** Retrieves a previously computed `AnalysisResponse` (including all generated `arrangements`) by `job_id`.
-3. **Interactive Tablature Editing (`PUT /api/v1/analyze/{job_id}/tablature`):** Validates physical guitar constraints (`string` 1–6, `fret` 0–24), recalculates `midi` and `note_name`, regenerates the 6-line `ascii_tab`, persists the updated job, and returns the updated `AnalysisResponse`.
-4. **Style & Fingerstyle Arrangement Generation (`POST /api/v1/analyze/{job_id}/arrange`):** Generates a new `ArrangementVariation` for the requested `style` (`"Fingerstyle"`, `"Neo Soul"`, `"Jazz Chord Melody"`, `"Acoustic Strumming"`), `difficulty` (`"Beginner"`, `"Intermediate"`, `"Advanced"`), `capo` (`0..12`), and `tempo_scale` (`0.5..1.5`), separating notes into polyphonic `VoiceRole` layers (`"melody"`, `"bass"`, `"harmony"`, `"percussive"`), appending/updating the variation in the job's `arrangements` list, and returning the `ArrangementVariation`.
-5. **Multi-Format Score & Tablature Export (`GET /api/v1/analyze/{job_id}/export`):** Exports either the primary `tablature` or a selected `arrangement_id` as a binary/text attachment (`midi`, `musicxml`, `ascii`, or `pdf`) with canonical `Content-Type` and `Content-Disposition: attachment; filename="arpegia-<job_id>.<ext>"`.
+### The 5 Ordered Pipeline Stages & Percentage Milestones
+
+| Stage Index | Stage Identifier (`PipelineStage`) | Milestone Range | Processing Description |
+| :---: | :--- | :---: | :--- |
+| **1** | `separating_stems` | **0% -> 25%** | Demucs 4-stem source separation (isolates guitar, bass, drums, vocals) or deterministic fast-skip if disabled. |
+| **2** | `detecting_key_tempo` | **25% -> 40%** | Audio loading, onset detection, tempo / BPM tracking, and Krumhansl-Schmuckler key profile correlation. |
+| **3** | `detecting_chords` | **40% -> 60%** | Constant-Q / chromagram harmonic analysis, chord label estimation, voicing resolution, and genre-specific re-harmonization suggestions. |
+| **4** | `transcribing_tablature` | **60% -> 85%** | Basic Pitch polyphonic note extraction, note segmentation, and biomechanical fretboard optimization via Viterbi shortest-path decoding (`TabNote`, `TabMeasure`, `ascii_tab`). |
+| **5** | `generating_arrangement` | **85% -> 100%** | Polyphonic voice separation (`VoiceRole`: melody, bass, harmony, percussive), style arrangement generation (`ArrangementVariation`), and final score validation. |
+
+### Progress Callback & Async Mode Architecture
+
+1. **Synchronous Mode (Default):**
+   - Invocation: `POST /api/v1/analyze` (or `async_mode=false`).
+   - Behavior: Synchronously executes `run_pipeline(...)`, returning `200 OK` with complete `AnalysisResponse`. 100% backward compatible with existing test suites.
+2. **Asynchronous Mode:**
+   - Invocation: `POST /api/v1/analyze?async_mode=true`.
+   - Behavior: Creates an in-memory job, launches `run_pipeline(audio_path, filename, progress_callback)` in a FastAPI background task, and returns `202 Accepted` with initial `JobProgressEvent` (`status="processing"`, `current_stage="separating_stems"`, `job_id`).
+3. **Real-Time Streaming (`WS /ws/analyze/{job_id}`):**
+   - The web client connects to `ws://localhost:8000/ws/analyze/{job_id}` upon receiving the `job_id`.
+   - Each time `progress_callback(stage, percent, message, detail)` fires in `services/audio-engine`, `apps/api` constructs a `JobProgressEvent` frame and broadcasts it to connected WebSocket clients.
+   - When the pipeline completes, a final frame (`event: "job.completed"`) containing the complete `AnalysisResponse` in `result` is transmitted, and the connection closes cleanly.
+   - If an error occurs, an error frame (`event: "job.failed"`) with structured `error` envelope is sent before closure.
+4. **HTTP Polling Fallback (`GET /api/v1/analyze/{job_id}/progress`):**
+   - If WebSocket connection fails or is blocked by network infrastructure, `apps/web` falls back to polling `GET /api/v1/analyze/{job_id}/progress` at intervals specified by `ARPEGIA_ASYNC_POLL_INTERVAL_MS` (default `800` ms).
 
 ---
 

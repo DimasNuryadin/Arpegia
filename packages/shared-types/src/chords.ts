@@ -1,4 +1,5 @@
 import { ArrangementStyle, DifficultyLevel, TablatureData } from './tabs';
+import type { JobProgressEvent } from './pipeline';
 
 export interface ChordEvent {
   id: string;
@@ -78,13 +79,14 @@ export interface ArrangementRequest {
 
 export interface AnalysisResponse {
   job_id: string;
-  status: 'completed' | 'processing' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed';
   metadata: SongMetadata;
   chords: ChordData[];
   improvisations: ImprovisationData[];
   chord_diagrams: ChordDiagram[];
   tablature: TablatureData;
   arrangements: ArrangementVariation[];
+  progress?: JobProgressEvent | null;
 }
 
 export interface ErrorDetail {
