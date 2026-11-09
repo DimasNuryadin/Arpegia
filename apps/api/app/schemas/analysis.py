@@ -1,4 +1,4 @@
-"""Pydantic v2 schemas defining the Arpegia Phase 1 & Phase 2 Guitar Intelligence contract."""
+"""Pydantic v2 schemas defining the Arpegia Phase 1, Phase 2 & Phase 3 Guitar Intelligence contract."""
 
 from typing import Any, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -6,7 +6,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 DEFAULT_GUITAR_TUNING: List[str] = ["E2", "A2", "D3", "G3", "B3", "E4"]
 
 TabTechniqueType = Literal["normal", "hammer-on", "pull-off", "slide", "bend"]
-TabDifficultyType = Literal["Beginner", "Intermediate", "Advanced"]
+DifficultyLevel = Literal["Beginner", "Intermediate", "Advanced"]
+TabDifficultyType = DifficultyLevel
+
+ArrangementStyle = Literal[
+    "Fingerstyle",
+    "Neo Soul",
+    "Jazz Chord Melody",
+    "Acoustic Strumming",
+]
+ExportFormat = Literal["midi", "musicxml", "ascii", "pdf"]
+VoiceRole = Literal["melody", "bass", "harmony", "percussive"]
 
 
 # ============================================================================
@@ -91,6 +101,13 @@ class TabNote(BaseModel):
         default="normal",
         description="Articulation technique ('normal', 'hammer-on', 'pull-off', 'slide', 'bend')",
     )
+    voice: Optional[VoiceRole] = Field(
+        default="melody",
+        description=(
+            "Polyphonic voice role ('melody', 'bass', 'harmony', 'percussive') allowing "
+            "Fingerstyle separation between thumb bass notes (strings 4-6) and plucked melody/arpeggio notes (strings 1-3)"
+        ),
+    )
 
 
 class TabMeasure(BaseModel):
@@ -114,7 +131,7 @@ class TablatureData(BaseModel):
         description="6-string guitar tuning from Low E (string 6) to High E (string 1)",
     )
     capo: int = Field(default=0, ge=0, le=12, description="Capo fret position (0 = no capo)")
-    difficulty: TabDifficultyType = Field(
+    difficulty: DifficultyLevel = Field(
         default="Beginner",
         description="Playability difficulty tier ('Beginner', 'Intermediate', 'Advanced')",
     )
@@ -192,6 +209,10 @@ class TabNoteEdit(BaseModel):
         default="normal",
         description="Updated articulation technique",
     )
+    voice: Optional[VoiceRole] = Field(
+        default=None,
+        description="Optional updated polyphonic voice role ('melody', 'bass', 'harmony', 'percussive')",
+    )
     start_time: Optional[float] = Field(
         default=None, ge=0.0, description="Optional updated onset timestamp in seconds"
     )
@@ -211,7 +232,7 @@ class TablatureUpdateRequest(BaseModel):
     capo: Optional[int] = Field(
         default=None, ge=0, le=12, description="Optional updated capo position"
     )
-    difficulty: Optional[TabDifficultyType] = Field(
+    difficulty: Optional[DifficultyLevel] = Field(
         default=None, description="Optional updated playability difficulty rating"
     )
     measures: Optional[List[TabMeasure]] = Field(
@@ -229,12 +250,76 @@ class TablatureUpdateRequest(BaseModel):
 
 
 # ============================================================================
+# Phase 3 AI Music Intelligence Models (Arrangements & Multi-Format Export)
+# ============================================================================
+
+
+class ArrangementVariation(BaseModel):
+    """Complete playable guitar arrangement variation for a specific style and difficulty."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    arrangement_id: str = Field(
+        ..., description="Unique arrangement variation identifier (e.g. 'arr-fingerstyle-default')"
+    )
+    title: str = Field(
+        ..., description="Human-readable arrangement title (e.g. 'Fingerstyle Solo Arrangement')"
+    )
+    style: ArrangementStyle = Field(
+        ...,
+        description="Arrangement style ('Fingerstyle', 'Neo Soul', 'Jazz Chord Melody', 'Acoustic Strumming')",
+    )
+    difficulty: DifficultyLevel = Field(
+        ..., description="Playability difficulty tier ('Beginner', 'Intermediate', 'Advanced')"
+    )
+    description: str = Field(
+        ...,
+        description="Summary of voice leading, bassline pattern, and chord substitutions used",
+    )
+    chords_used: List[str] = Field(
+        default_factory=list,
+        description="Sequence of reharmonized or arranged chord voicings used in this variation",
+    )
+    tablature: TablatureData = Field(
+        default_factory=TablatureData,
+        description="Complete playable 6-string tablature with measures, polyphonic voice notes, and ascii_tab",
+    )
+
+
+class ArrangementRequest(BaseModel):
+    """Request payload for POST /api/v1/analyze/{job_id}/arrange."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    style: ArrangementStyle = Field(
+        ...,
+        description="Target arrangement style ('Fingerstyle', 'Neo Soul', 'Jazz Chord Melody', 'Acoustic Strumming')",
+    )
+    difficulty: DifficultyLevel = Field(
+        ...,
+        description="Target playability difficulty ('Beginner', 'Intermediate', 'Advanced')",
+    )
+    capo: int = Field(
+        default=0,
+        ge=0,
+        le=12,
+        description="Capo fret position (0 to 12, default 0)",
+    )
+    tempo_scale: float = Field(
+        default=1.0,
+        ge=0.5,
+        le=1.5,
+        description="Tempo scaling factor (0.5 to 1.5, default 1.0)",
+    )
+
+
+# ============================================================================
 # Top-Level Analysis Response & Error Envelope Contracts
 # ============================================================================
 
 
 class AnalysisOutput(BaseModel):
-    """Audio Engine pipeline output contract (Phase 1 + Phase 2)."""
+    """Audio Engine pipeline output contract (Phase 1 + Phase 2 + Phase 3)."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -243,6 +328,7 @@ class AnalysisOutput(BaseModel):
     improvisations: List[ImprovisationItem] = Field(default_factory=list)
     chord_diagrams: List[ChordDiagram] = Field(default_factory=list)
     tablature: TablatureData = Field(default_factory=TablatureData)
+    arrangements: List[ArrangementVariation] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):
@@ -304,6 +390,7 @@ class AnalysisResponse(BaseModel):
                                     "note_name": "G2",
                                     "confidence": 0.95,
                                     "technique": "normal",
+                                    "voice": "bass",
                                 }
                             ],
                         }
@@ -317,6 +404,77 @@ class AnalysisResponse(BaseModel):
                         "E|-3---------------|"
                     ),
                 },
+                "arrangements": [
+                    {
+                        "arrangement_id": "arr-fingerstyle-default",
+                        "title": "Fingerstyle Solo Arrangement",
+                        "style": "Fingerstyle",
+                        "difficulty": "Intermediate",
+                        "description": (
+                            "Alternating thumb bass on strings 4-6 with syncopated "
+                            "melody and open-string harmonic resonance on strings 1-3."
+                        ),
+                        "chords_used": ["Gadd9", "Em7", "Cmaj7", "Dsus4"],
+                        "tablature": {
+                            "tuning": ["E2", "A2", "D3", "G3", "B3", "E4"],
+                            "capo": 0,
+                            "difficulty": "Intermediate",
+                            "measures": [
+                                {
+                                    "measure_number": 1,
+                                    "start_time": 0.0,
+                                    "end_time": 2.4,
+                                    "notes": [
+                                        {
+                                            "id": "arr-note-1",
+                                            "start_time": 0.0,
+                                            "duration": 1.2,
+                                            "string": 6,
+                                            "fret": 3,
+                                            "midi": 43,
+                                            "note_name": "G2",
+                                            "confidence": 0.96,
+                                            "technique": "normal",
+                                            "voice": "bass",
+                                        },
+                                        {
+                                            "id": "arr-note-2",
+                                            "start_time": 0.6,
+                                            "duration": 0.6,
+                                            "string": 3,
+                                            "fret": 2,
+                                            "midi": 57,
+                                            "note_name": "A3",
+                                            "confidence": 0.94,
+                                            "technique": "hammer-on",
+                                            "voice": "harmony",
+                                        },
+                                        {
+                                            "id": "arr-note-3",
+                                            "start_time": 1.2,
+                                            "duration": 1.2,
+                                            "string": 1,
+                                            "fret": 3,
+                                            "midi": 67,
+                                            "note_name": "G4",
+                                            "confidence": 0.95,
+                                            "technique": "normal",
+                                            "voice": "melody",
+                                        },
+                                    ],
+                                }
+                            ],
+                            "ascii_tab": (
+                                "e|---------3-------|\n"
+                                "B|-----------------|\n"
+                                "G|-----2h----------|\n"
+                                "D|-----------------|\n"
+                                "A|-----------------|\n"
+                                "E|-3---------------|"
+                            ),
+                        },
+                    }
+                ],
             }
         },
     )
@@ -338,6 +496,13 @@ class AnalysisResponse(BaseModel):
     tablature: TablatureData = Field(
         default_factory=TablatureData,
         description="Generated guitar tablature with measures, notes, and ASCII preview",
+    )
+    arrangements: List[ArrangementVariation] = Field(
+        default_factory=list,
+        description=(
+            "Generated guitar arrangements (defaults to at least 1 Fingerstyle arrangement "
+            "generated during analysis, plus custom variations generated on demand)"
+        ),
     )
 
 

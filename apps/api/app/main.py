@@ -39,10 +39,16 @@ def _resolve_error_code(status_code: int, message: str) -> str:
     """Map HTTP status code and message to canonical error codes from docs/api-contract.md."""
     msg_lower = message.lower()
     if status_code == status.HTTP_404_NOT_FOUND:
+        if "arrangement" in msg_lower:
+            return "ARRANGEMENT_NOT_FOUND"
         return "JOB_NOT_FOUND"
     if status_code == status.HTTP_413_CONTENT_TOO_LARGE:
         return "FILE_TOO_LARGE"
     if status_code == status.HTTP_400_BAD_REQUEST:
+        if "export" in msg_lower:
+            return "UNSUPPORTED_EXPORT_FORMAT"
+        if "arrangement" in msg_lower or "style" in msg_lower or "tempo_scale" in msg_lower:
+            return "INVALID_ARRANGEMENT_REQUEST"
         if "format" in msg_lower or "mime" in msg_lower or "filename" in msg_lower:
             return "INVALID_AUDIO_FORMAT"
         return "INVALID_TAB_NOTE"
