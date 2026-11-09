@@ -1,4 +1,4 @@
-import { TablatureData } from './tabs';
+import { ArrangementStyle, DifficultyLevel, TablatureData } from './tabs';
 
 export interface ChordEvent {
   id: string;
@@ -21,7 +21,7 @@ export interface ChordProgressionAnalysis {
   chords: ChordEvent[];
 }
 
-// Phase 1 & Phase 2 Shared Data Contract (Web <-> API <-> Audio Engine)
+// Phase 1, Phase 2 & Phase 3 Shared Data Contract (Web <-> API <-> Audio Engine)
 export interface SongMetadata {
   filename: string;
   duration: number;
@@ -37,7 +37,14 @@ export interface ChordData {
   confidence: number;
 }
 
-export type MusicStyle = 'Pop' | 'Jazz' | 'Neo Soul' | 'Fingerstyle' | string;
+export type MusicStyle =
+  | 'Pop'
+  | 'Jazz'
+  | 'Neo Soul'
+  | 'Fingerstyle'
+  | 'Jazz Chord Melody'
+  | 'Acoustic Strumming'
+  | string;
 
 export interface ImprovisationData {
   original_chord: string;
@@ -52,6 +59,23 @@ export interface ChordDiagram {
   base_fret: number; // default 1
 }
 
+export interface ArrangementVariation {
+  arrangement_id: string;
+  title: string; // e.g., "Fingerstyle Solo Arrangement"
+  style: ArrangementStyle;
+  difficulty: DifficultyLevel;
+  description: string; // summary of voice leading, bassline pattern, and chord substitutions used
+  chords_used: string[];
+  tablature: TablatureData; // complete playable 6-string tab with measures, notes, and ascii_tab
+}
+
+export interface ArrangementRequest {
+  style: ArrangementStyle;
+  difficulty: DifficultyLevel;
+  capo?: number; // default 0, range 0 to 12
+  tempo_scale?: number; // default 1.0, range 0.5 to 1.5
+}
+
 export interface AnalysisResponse {
   job_id: string;
   status: 'completed' | 'processing' | 'failed';
@@ -60,6 +84,7 @@ export interface AnalysisResponse {
   improvisations: ImprovisationData[];
   chord_diagrams: ChordDiagram[];
   tablature: TablatureData;
+  arrangements: ArrangementVariation[];
 }
 
 export interface ErrorDetail {

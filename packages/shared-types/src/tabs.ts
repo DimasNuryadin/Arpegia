@@ -2,7 +2,19 @@ export type GuitarTuning = 'STANDARD_E' | 'DROP_D' | 'DADGAD' | 'OPEN_D' | 'OPEN
 
 export type TabTechnique = 'normal' | 'hammer-on' | 'pull-off' | 'slide' | 'bend';
 
-export type TabDifficulty = 'Beginner' | 'Intermediate' | 'Advanced';
+export type DifficultyLevel = 'Beginner' | 'Intermediate' | 'Advanced';
+
+export type TabDifficulty = DifficultyLevel;
+
+export type ArrangementStyle =
+  | 'Fingerstyle'
+  | 'Neo Soul'
+  | 'Jazz Chord Melody'
+  | 'Acoustic Strumming';
+
+export type ExportFormat = 'midi' | 'musicxml' | 'ascii' | 'pdf';
+
+export type VoiceRole = 'melody' | 'bass' | 'harmony' | 'percussive';
 
 export const DEFAULT_GUITAR_TUNING: string[] = ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'];
 
@@ -16,6 +28,7 @@ export interface TabNote {
   note_name: string; // e.g., "E4", "G#3"
   confidence: number; // 0.0 to 1.0
   technique: TabTechnique;
+  voice?: VoiceRole; // default "melody", polyphonic Fingerstyle role ("melody" | "bass" | "harmony" | "percussive")
 }
 
 export interface TabMeasure {
@@ -28,7 +41,7 @@ export interface TabMeasure {
 export interface TablatureData {
   tuning: string[]; // default ["E2", "A2", "D3", "G3", "B3", "E4"]
   capo: number; // default 0
-  difficulty: TabDifficulty;
+  difficulty: DifficultyLevel;
   measures: TabMeasure[];
   ascii_tab: string; // pre-rendered 6-line ASCII tablature preview for export/quick view
 }
@@ -38,6 +51,7 @@ export interface TabNoteEdit {
   string: number; // 1 to 6, where 1 = High E4 and 6 = Low E2
   fret: number; // 0 to 24
   technique?: TabTechnique;
+  voice?: VoiceRole;
   start_time?: number;
   duration?: number;
 }
@@ -45,7 +59,7 @@ export interface TabNoteEdit {
 export interface TablatureUpdateRequest {
   tuning?: string[];
   capo?: number;
-  difficulty?: TabDifficulty;
+  difficulty?: DifficultyLevel;
   measures?: TabMeasure[];
   notes?: TabNoteEdit[];
 }
