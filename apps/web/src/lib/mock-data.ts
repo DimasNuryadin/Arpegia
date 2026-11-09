@@ -1,9 +1,15 @@
 import {
   AnalysisResponse,
+  ArrangementRequest,
+  ArrangementStyle,
+  ArrangementVariation,
   ChordDiagram,
   ChordVoicingDetail,
   DEFAULT_GUITAR_TUNING,
+  DifficultyLevel,
   TabMeasure,
+  TabNote,
+  VoiceRole,
 } from "../types";
 import { computeMidiAndNoteName, generateAsciiTab } from "./tab-utils";
 
@@ -15,15 +21,19 @@ function makeNote(
   fret: number,
   technique: "normal" | "hammer-on" | "pull-off" | "slide" | "bend" = "normal",
   confidence = 0.94,
+  voice?: VoiceRole,
   tuning: string[] = DEFAULT_GUITAR_TUNING,
   capo = 0
-) {
+): TabNote {
   const { midi, note_name } = computeMidiAndNoteName(
     stringNum,
     fret,
     tuning,
     capo
   );
+  const resolvedVoice: VoiceRole =
+    voice ??
+    (stringNum >= 5 ? "bass" : stringNum <= 2 ? "melody" : "harmony");
   return {
     id,
     start_time: Number(start_time.toFixed(2)),
@@ -34,6 +44,7 @@ function makeNote(
     note_name,
     confidence,
     technique,
+    voice: resolvedVoice,
   };
 }
 
@@ -43,10 +54,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 0.0,
     end_time: 2.4,
     notes: [
-      makeNote("note-1", 0.0, 0.6, 6, 3, "normal", 0.96),
-      makeNote("note-2", 0.6, 0.6, 4, 0, "normal", 0.93),
-      makeNote("note-3", 1.2, 0.6, 3, 0, "hammer-on", 0.94),
-      makeNote("note-4", 1.8, 0.6, 2, 3, "normal", 0.95),
+      makeNote("note-1", 0.0, 0.6, 6, 3, "normal", 0.96, "bass"),
+      makeNote("note-2", 0.6, 0.6, 4, 0, "normal", 0.93, "harmony"),
+      makeNote("note-3", 1.2, 0.6, 3, 0, "hammer-on", 0.94, "harmony"),
+      makeNote("note-4", 1.8, 0.6, 2, 3, "normal", 0.95, "melody"),
     ],
   },
   {
@@ -54,10 +65,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 2.4,
     end_time: 4.8,
     notes: [
-      makeNote("note-5", 2.4, 0.6, 6, 2, "normal", 0.91),
-      makeNote("note-6", 3.0, 0.6, 3, 2, "normal", 0.92),
-      makeNote("note-7", 3.6, 0.6, 2, 3, "pull-off", 0.9),
-      makeNote("note-8", 4.2, 0.6, 1, 2, "slide", 0.93),
+      makeNote("note-5", 2.4, 0.6, 6, 2, "normal", 0.91, "bass"),
+      makeNote("note-6", 3.0, 0.6, 3, 2, "normal", 0.92, "harmony"),
+      makeNote("note-7", 3.6, 0.6, 2, 3, "pull-off", 0.9, "melody"),
+      makeNote("note-8", 4.2, 0.6, 1, 2, "slide", 0.93, "melody"),
     ],
   },
   {
@@ -65,10 +76,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 4.8,
     end_time: 7.2,
     notes: [
-      makeNote("note-9", 4.8, 0.6, 6, 0, "normal", 0.97),
-      makeNote("note-10", 5.4, 0.6, 5, 2, "normal", 0.95),
-      makeNote("note-11", 6.0, 0.6, 4, 2, "hammer-on", 0.94),
-      makeNote("note-12", 6.6, 0.6, 2, 3, "bend", 0.91),
+      makeNote("note-9", 4.8, 0.6, 6, 0, "normal", 0.97, "bass"),
+      makeNote("note-10", 5.4, 0.6, 5, 2, "normal", 0.95, "bass"),
+      makeNote("note-11", 6.0, 0.6, 4, 2, "hammer-on", 0.94, "harmony"),
+      makeNote("note-12", 6.6, 0.6, 2, 3, "bend", 0.91, "melody"),
     ],
   },
   {
@@ -76,10 +87,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 7.2,
     end_time: 9.6,
     notes: [
-      makeNote("note-13", 7.2, 0.6, 5, 3, "normal", 0.95),
-      makeNote("note-14", 7.8, 0.6, 4, 2, "normal", 0.94),
-      makeNote("note-15", 8.4, 0.6, 3, 0, "normal", 0.96),
-      makeNote("note-16", 9.0, 0.6, 2, 0, "normal", 0.95),
+      makeNote("note-13", 7.2, 0.6, 5, 3, "normal", 0.95, "bass"),
+      makeNote("note-14", 7.8, 0.6, 4, 2, "normal", 0.94, "harmony"),
+      makeNote("note-15", 8.4, 0.6, 3, 0, "normal", 0.96, "harmony"),
+      makeNote("note-16", 9.0, 0.6, 2, 0, "normal", 0.95, "melody"),
     ],
   },
   {
@@ -87,10 +98,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 9.6,
     end_time: 12.0,
     notes: [
-      makeNote("note-17", 9.6, 0.6, 5, 2, "normal", 0.92),
-      makeNote("note-18", 10.2, 0.6, 4, 4, "normal", 0.9),
-      makeNote("note-19", 10.8, 0.6, 3, 2, "normal", 0.93),
-      makeNote("note-20", 11.4, 0.6, 2, 3, "slide", 0.91),
+      makeNote("note-17", 9.6, 0.6, 5, 2, "normal", 0.92, "bass"),
+      makeNote("note-18", 10.2, 0.6, 4, 4, "normal", 0.9, "harmony"),
+      makeNote("note-19", 10.8, 0.6, 3, 2, "normal", 0.93, "harmony"),
+      makeNote("note-20", 11.4, 0.6, 2, 3, "slide", 0.91, "melody"),
     ],
   },
   {
@@ -98,10 +109,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 12.0,
     end_time: 14.4,
     notes: [
-      makeNote("note-21", 12.0, 0.6, 6, 5, "normal", 0.94),
-      makeNote("note-22", 12.6, 0.6, 4, 5, "normal", 0.92),
-      makeNote("note-23", 13.2, 0.6, 3, 5, "normal", 0.93),
-      makeNote("note-24", 13.8, 0.6, 1, 7, "pull-off", 0.91),
+      makeNote("note-21", 12.0, 0.6, 6, 5, "normal", 0.94, "bass"),
+      makeNote("note-22", 12.6, 0.6, 4, 5, "normal", 0.92, "harmony"),
+      makeNote("note-23", 13.2, 0.6, 3, 5, "normal", 0.93, "harmony"),
+      makeNote("note-24", 13.8, 0.6, 1, 7, "pull-off", 0.91, "melody"),
     ],
   },
   {
@@ -109,10 +120,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 14.4,
     end_time: 16.8,
     notes: [
-      makeNote("note-25", 14.4, 0.6, 4, 0, "normal", 0.96),
-      makeNote("note-26", 15.0, 0.6, 3, 2, "normal", 0.94),
-      makeNote("note-27", 15.6, 0.6, 2, 1, "normal", 0.92),
-      makeNote("note-28", 16.2, 0.6, 1, 3, "pull-off", 0.9),
+      makeNote("note-25", 14.4, 0.6, 4, 0, "normal", 0.96, "bass"),
+      makeNote("note-26", 15.0, 0.6, 3, 2, "normal", 0.94, "harmony"),
+      makeNote("note-27", 15.6, 0.6, 2, 1, "normal", 0.92, "melody"),
+      makeNote("note-28", 16.2, 0.6, 1, 3, "pull-off", 0.9, "melody"),
     ],
   },
   {
@@ -120,10 +131,10 @@ const NEO_SOUL_G_MEASURES: TabMeasure[] = [
     start_time: 16.8,
     end_time: 19.2,
     notes: [
-      makeNote("note-29", 16.8, 0.6, 6, 3, "normal", 0.97),
-      makeNote("note-30", 17.4, 0.6, 4, 0, "normal", 0.95),
-      makeNote("note-31", 18.0, 0.6, 3, 0, "normal", 0.96),
-      makeNote("note-32", 18.6, 0.6, 1, 3, "normal", 0.95),
+      makeNote("note-29", 16.8, 0.6, 6, 3, "normal", 0.97, "bass"),
+      makeNote("note-30", 17.4, 0.6, 4, 0, "normal", 0.95, "harmony"),
+      makeNote("note-31", 18.0, 0.6, 3, 0, "normal", 0.96, "harmony"),
+      makeNote("note-32", 18.6, 0.6, 1, 3, "normal", 0.95, "melody"),
     ],
   },
 ];
@@ -222,7 +233,407 @@ const JAZZ_MEASURES: TabMeasure[] = [
   },
 ];
 
-// Canonical ChordDiagram dictionary (frets: length 6, Low E to High E, -1 muted, 0 open, 1..24 fretted)
+const FINGERSTYLE_SOLO_MEASURES: TabMeasure[] = [
+  {
+    measure_number: 1,
+    start_time: 0.0,
+    end_time: 2.4,
+    notes: [
+      makeNote("arr-fs-1", 0.0, 1.2, 6, 3, "normal", 0.97, "bass"),
+      makeNote("arr-fs-2", 0.4, 0.5, 4, 0, "normal", 0.94, "harmony"),
+      makeNote("arr-fs-3", 0.8, 0.5, 3, 2, "hammer-on", 0.95, "harmony"),
+      makeNote("arr-fs-4", 1.2, 0.6, 1, 3, "normal", 0.96, "melody"),
+      makeNote("arr-fs-5", 1.8, 0.6, 2, 0, "pull-off", 0.93, "melody"),
+    ],
+  },
+  {
+    measure_number: 2,
+    start_time: 2.4,
+    end_time: 4.8,
+    notes: [
+      makeNote("arr-fs-6", 2.4, 1.2, 6, 2, "normal", 0.95, "bass"),
+      makeNote("arr-fs-7", 2.8, 0.5, 4, 0, "normal", 0.93, "harmony"),
+      makeNote("arr-fs-8", 3.2, 0.6, 2, 3, "normal", 0.94, "melody"),
+      makeNote("arr-fs-9", 3.8, 0.4, 6, 0, "normal", 0.9, "percussive"),
+      makeNote("arr-fs-10", 4.2, 0.6, 1, 2, "slide", 0.95, "melody"),
+    ],
+  },
+  {
+    measure_number: 3,
+    start_time: 4.8,
+    end_time: 7.2,
+    notes: [
+      makeNote("arr-fs-11", 4.8, 1.2, 6, 0, "normal", 0.98, "bass"),
+      makeNote("arr-fs-12", 5.2, 0.5, 5, 2, "normal", 0.94, "bass"),
+      makeNote("arr-fs-13", 5.6, 0.5, 3, 0, "normal", 0.95, "harmony"),
+      makeNote("arr-fs-14", 6.0, 0.6, 2, 3, "hammer-on", 0.94, "melody"),
+      makeNote("arr-fs-15", 6.6, 0.6, 1, 0, "normal", 0.96, "melody"),
+    ],
+  },
+  {
+    measure_number: 4,
+    start_time: 7.2,
+    end_time: 9.6,
+    notes: [
+      makeNote("arr-fs-16", 7.2, 1.2, 5, 3, "normal", 0.96, "bass"),
+      makeNote("arr-fs-17", 7.6, 0.5, 4, 2, "normal", 0.94, "harmony"),
+      makeNote("arr-fs-18", 8.0, 0.5, 3, 0, "normal", 0.95, "harmony"),
+      makeNote("arr-fs-19", 8.4, 0.6, 2, 0, "normal", 0.95, "melody"),
+      makeNote("arr-fs-20", 9.0, 0.6, 1, 2, "pull-off", 0.92, "melody"),
+    ],
+  },
+];
+
+const NEO_SOUL_VOICING_MEASURES: TabMeasure[] = [
+  {
+    measure_number: 1,
+    start_time: 0.0,
+    end_time: 2.4,
+    notes: [
+      makeNote("arr-ns-1", 0.0, 1.2, 6, 3, "normal", 0.97, "bass"),
+      makeNote("arr-ns-2", 0.45, 0.5, 4, 4, "normal", 0.95, "harmony"),
+      makeNote("arr-ns-3", 0.9, 0.5, 3, 2, "slide", 0.94, "harmony"),
+      makeNote("arr-ns-4", 1.35, 0.55, 2, 3, "hammer-on", 0.96, "melody"),
+      makeNote("arr-ns-5", 1.9, 0.5, 1, 5, "pull-off", 0.93, "melody"),
+    ],
+  },
+  {
+    measure_number: 2,
+    start_time: 2.4,
+    end_time: 4.8,
+    notes: [
+      makeNote("arr-ns-6", 2.4, 1.2, 6, 0, "normal", 0.97, "bass"),
+      makeNote("arr-ns-7", 2.85, 0.5, 4, 2, "normal", 0.94, "harmony"),
+      makeNote("arr-ns-8", 3.3, 0.5, 3, 4, "normal", 0.93, "harmony"),
+      makeNote("arr-ns-9", 3.75, 0.5, 5, 2, "normal", 0.91, "percussive"),
+      makeNote("arr-ns-10", 4.2, 0.6, 1, 2, "slide", 0.95, "melody"),
+    ],
+  },
+  {
+    measure_number: 3,
+    start_time: 4.8,
+    end_time: 7.2,
+    notes: [
+      makeNote("arr-ns-11", 4.8, 1.2, 5, 3, "normal", 0.96, "bass"),
+      makeNote("arr-ns-12", 5.25, 0.5, 4, 2, "normal", 0.94, "harmony"),
+      makeNote("arr-ns-13", 5.7, 0.5, 3, 4, "normal", 0.95, "harmony"),
+      makeNote("arr-ns-14", 6.15, 0.5, 2, 3, "bend", 0.92, "melody"),
+      makeNote("arr-ns-15", 6.65, 0.55, 1, 3, "normal", 0.94, "melody"),
+    ],
+  },
+  {
+    measure_number: 4,
+    start_time: 7.2,
+    end_time: 9.6,
+    notes: [
+      makeNote("arr-ns-16", 7.2, 1.2, 5, 5, "normal", 0.95, "bass"),
+      makeNote("arr-ns-17", 7.65, 0.5, 4, 4, "normal", 0.93, "harmony"),
+      makeNote("arr-ns-18", 8.1, 0.5, 3, 5, "normal", 0.94, "harmony"),
+      makeNote("arr-ns-19", 8.55, 0.5, 2, 5, "slide", 0.94, "melody"),
+      makeNote("arr-ns-20", 9.05, 0.55, 1, 5, "pull-off", 0.93, "melody"),
+    ],
+  },
+];
+
+export const DEFAULT_FINGERSTYLE_ARRANGEMENT: ArrangementVariation = {
+  arrangement_id: "arr-fingerstyle-default",
+  title: "Fingerstyle Solo Arrangement",
+  style: "Fingerstyle",
+  difficulty: "Intermediate",
+  description:
+    "Alternating thumb bass on strings 4-6 with syncopated melody and open-string harmonic resonance on strings 1-3.",
+  chords_used: ["Gadd9", "D/F#", "Em9", "Cmaj7", "Am9", "D7sus4"],
+  tablature: {
+    tuning: DEFAULT_GUITAR_TUNING,
+    capo: 0,
+    difficulty: "Intermediate",
+    measures: FINGERSTYLE_SOLO_MEASURES,
+    ascii_tab: generateAsciiTab(FINGERSTYLE_SOLO_MEASURES, DEFAULT_GUITAR_TUNING),
+  },
+};
+
+export const DEFAULT_NEO_SOUL_ARRANGEMENT: ArrangementVariation = {
+  arrangement_id: "arr-neo-soul-default",
+  title: "Neo Soul Extended Voicing Arrangement",
+  style: "Neo Soul",
+  difficulty: "Advanced",
+  description:
+    "Extended 9th/11th Neo Soul substitutions with syncopated thumb bass on strings 5-6, inner voice harmony on strings 3-4, and embellished melody slides on strings 1-2.",
+  chords_used: ["Gmaj9", "Em11", "Cmaj9#11", "D13sus4"],
+  tablature: {
+    tuning: DEFAULT_GUITAR_TUNING,
+    capo: 0,
+    difficulty: "Advanced",
+    measures: NEO_SOUL_VOICING_MEASURES,
+    ascii_tab: generateAsciiTab(NEO_SOUL_VOICING_MEASURES, DEFAULT_GUITAR_TUNING),
+  },
+};
+
+const STYLE_CHORD_MAP: Record<ArrangementStyle, string[]> = {
+  Fingerstyle: ["Gadd9", "D/F#", "Em7(add11)", "Cmaj7", "Am9", "Dsus4"],
+  "Neo Soul": ["Gmaj9", "F#m7(b5)", "Em11", "Cmaj9#11", "Am11", "D13sus4"],
+  "Jazz Chord Melody": [
+    "Gmaj7#11",
+    "B7alt",
+    "Em9",
+    "A13",
+    "Cmaj9",
+    "Am7(b5)",
+    "D7(b9)",
+  ],
+  "Acoustic Strumming": ["G", "D/F#", "Em7", "Cadd9", "Am7", "Dsus4"],
+};
+
+const STYLE_DESCRIPTION_MAP: Record<
+  ArrangementStyle,
+  (difficulty: DifficultyLevel, capo: number, tempoScale: number) => string
+> = {
+  Fingerstyle: (difficulty, capo, tempoScale) =>
+    `Polyphonic Travis-picking thumb bassline on strings 5-6 paired with lyrical upper-register melody on strings 1-2 and open inner-voice resonance (${difficulty} tier, Capo ${capo}, ${tempoScale}x tempo).`,
+  "Neo Soul": (difficulty, capo, tempoScale) =>
+    `Lush R&B / Neo Soul 9th & 11th shell voicings with syncopated thumb bass, double-stop hammer-on embellishments, and ghosted percussive thumb slaps (${difficulty} tier, Capo ${capo}, ${tempoScale}x tempo).`,
+  "Jazz Chord Melody": (difficulty, capo, tempoScale) =>
+    `Drop-2 & Drop-3 jazz chord-melody voice leading with walking bass motion on strings 5-6, tritone dominant substitutions, and chromatic approach tones (${difficulty} tier, Capo ${capo}, ${tempoScale}x tempo).`,
+  "Acoustic Strumming": (difficulty, capo, tempoScale) =>
+    `Dynamic folk-pop acoustic rhythm pattern combining root bass strikes on beats 1 & 3 with open-string arpeggiated strums and percussive muting (${difficulty} tier, Capo ${capo}, ${tempoScale}x tempo).`,
+};
+
+/**
+ * Generates a realistic, biomechanically playable ArrangementVariation on demand
+ * when in Mock/Demo mode or when the backend /arrange endpoint is offline.
+ */
+export function buildMockArrangementVariation(
+  request: ArrangementRequest,
+  sourceAnalysis?: AnalysisResponse
+): ArrangementVariation {
+  const style: ArrangementStyle = request.style || "Fingerstyle";
+  const difficulty: DifficultyLevel = request.difficulty || "Intermediate";
+  const capo = Math.max(0, Math.min(12, Math.round(request.capo ?? 0)));
+  const tempoScale = Math.max(
+    0.5,
+    Math.min(1.5, Number((request.tempo_scale ?? 1.0).toFixed(2)))
+  );
+
+  const tuning =
+    sourceAnalysis?.tablature?.tuning &&
+    sourceAnalysis.tablature.tuning.length === 6
+      ? sourceAnalysis.tablature.tuning
+      : DEFAULT_GUITAR_TUNING;
+
+  const baseDuration = Number((2.4 / tempoScale).toFixed(2));
+  const step = Number((baseDuration / 4).toFixed(2));
+
+  // Style-specific note patterns across 4 measures with polyphonic voice roles
+  const styleTemplates: Record<
+    ArrangementStyle,
+    Array<
+      Array<{
+        relBeat: number;
+        durBeats: number;
+        string: number;
+        fret: number;
+        tech: "normal" | "hammer-on" | "pull-off" | "slide" | "bend";
+        voice: VoiceRole;
+      }>
+    >
+  > = {
+    Fingerstyle: [
+      [
+        { relBeat: 0, durBeats: 2, string: 6, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.5, durBeats: 1, string: 4, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 1, durBeats: 1.5, string: 2, fret: 3, tech: "hammer-on", voice: "melody" },
+        { relBeat: 2, durBeats: 2, string: 5, fret: 2, tech: "normal", voice: "bass" },
+        { relBeat: 2.5, durBeats: 1, string: 3, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 3, tech: "pull-off", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 2, string: 6, fret: 2, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 3, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1.5, string: 2, fret: 3, tech: "normal", voice: "melody" },
+        { relBeat: 2.25, durBeats: 0.5, string: 6, fret: 0, tech: "normal", voice: "percussive" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 2, tech: "slide", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 2, string: 6, fret: 0, tech: "normal", voice: "bass" },
+        { relBeat: 0.5, durBeats: 1, string: 5, fret: 2, tech: "normal", voice: "bass" },
+        { relBeat: 1.25, durBeats: 1, string: 4, fret: 2, tech: "hammer-on", voice: "harmony" },
+        { relBeat: 2, durBeats: 1, string: 3, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 2.75, durBeats: 1.25, string: 1, fret: 0, tech: "normal", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 2, string: 5, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1, string: 3, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 1, string: 2, fret: 1, tech: "hammer-on", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 0, tech: "normal", voice: "melody" },
+      ],
+    ],
+    "Neo Soul": [
+      [
+        { relBeat: 0, durBeats: 2, string: 6, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.5, durBeats: 1, string: 4, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 1, durBeats: 1, string: 3, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.75, durBeats: 1.25, string: 2, fret: 3, tech: "slide", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 5, tech: "pull-off", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 2, string: 6, fret: 0, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1, string: 3, fret: 4, tech: "hammer-on", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 0.5, string: 5, fret: 2, tech: "normal", voice: "percussive" },
+        { relBeat: 2.75, durBeats: 1.25, string: 1, fret: 7, tech: "slide", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 2, string: 5, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1, string: 3, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 1, string: 2, fret: 3, tech: "bend", voice: "melody" },
+        { relBeat: 3.1, durBeats: 0.9, string: 1, fret: 3, tech: "normal", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 2, string: 5, fret: 5, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1, string: 3, fret: 5, tech: "normal", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 1, string: 2, fret: 5, tech: "hammer-on", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 5, tech: "pull-off", voice: "melody" },
+      ],
+    ],
+    "Jazz Chord Melody": [
+      [
+        { relBeat: 0, durBeats: 1.5, string: 6, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.1, durBeats: 1.4, string: 4, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 0.2, durBeats: 1.4, string: 3, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 0.3, durBeats: 1.5, string: 2, fret: 3, tech: "normal", voice: "melody" },
+        { relBeat: 2, durBeats: 1, string: 6, fret: 4, tech: "slide", voice: "bass" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 5, tech: "normal", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 1.5, string: 5, fret: 2, tech: "normal", voice: "bass" },
+        { relBeat: 0.5, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.25, durBeats: 1, string: 3, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 2, durBeats: 1, string: 5, fret: 4, tech: "normal", voice: "bass" },
+        { relBeat: 2.75, durBeats: 1.25, string: 2, fret: 5, tech: "slide", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 1.5, string: 5, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.5, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.25, durBeats: 1, string: 3, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 2, durBeats: 1, string: 2, fret: 3, tech: "normal", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 2, tech: "pull-off", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 1.5, string: 5, fret: 5, tech: "normal", voice: "bass" },
+        { relBeat: 0.5, durBeats: 1, string: 4, fret: 4, tech: "normal", voice: "harmony" },
+        { relBeat: 1.25, durBeats: 1, string: 3, fret: 5, tech: "normal", voice: "harmony" },
+        { relBeat: 2, durBeats: 1, string: 2, fret: 4, tech: "bend", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 3, tech: "normal", voice: "melody" },
+      ],
+    ],
+    "Acoustic Strumming": [
+      [
+        { relBeat: 0, durBeats: 1.5, string: 6, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 1.25, durBeats: 1, string: 3, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 2, durBeats: 0.5, string: 6, fret: 3, tech: "normal", voice: "percussive" },
+        { relBeat: 2.75, durBeats: 1.25, string: 1, fret: 3, tech: "normal", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 1.5, string: 6, fret: 2, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1, string: 3, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 1, string: 2, fret: 3, tech: "normal", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 2, tech: "hammer-on", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 1.5, string: 6, fret: 0, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 5, fret: 2, tech: "normal", voice: "bass" },
+        { relBeat: 1.5, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 0.5, string: 5, fret: 0, tech: "normal", voice: "percussive" },
+        { relBeat: 2.75, durBeats: 1.25, string: 2, fret: 3, tech: "normal", voice: "melody" },
+      ],
+      [
+        { relBeat: 0, durBeats: 1.5, string: 5, fret: 3, tech: "normal", voice: "bass" },
+        { relBeat: 0.75, durBeats: 1, string: 4, fret: 2, tech: "normal", voice: "harmony" },
+        { relBeat: 1.5, durBeats: 1, string: 3, fret: 0, tech: "normal", voice: "harmony" },
+        { relBeat: 2.25, durBeats: 1, string: 2, fret: 3, tech: "normal", voice: "melody" },
+        { relBeat: 3, durBeats: 1, string: 1, fret: 3, tech: "normal", voice: "melody" },
+      ],
+    ],
+  };
+
+  const selectedTemplate =
+    styleTemplates[style] || styleTemplates["Fingerstyle"];
+  const fretShift =
+    difficulty === "Advanced" ? 2 : difficulty === "Beginner" ? 0 : 0;
+
+  let noteCounter = 1;
+  const measures: TabMeasure[] = selectedTemplate.map((barNotes, barIdx) => {
+    const mStart = Number((barIdx * baseDuration).toFixed(2));
+    const mEnd = Number(((barIdx + 1) * baseDuration).toFixed(2));
+
+    const filteredBarNotes =
+      difficulty === "Beginner"
+        ? barNotes.filter((_, idx) => idx < 4)
+        : barNotes;
+
+    const notes: TabNote[] = filteredBarNotes.map((item) => {
+      const startTime = Number((mStart + item.relBeat * step).toFixed(2));
+      const duration = Number(Math.max(0.25, item.durBeats * step).toFixed(2));
+      const adjustedFret = Math.max(
+        0,
+        Math.min(24, item.fret === 0 ? 0 : item.fret + fretShift)
+      );
+      const tech =
+        difficulty === "Beginner" && item.tech !== "normal"
+          ? "normal"
+          : item.tech;
+
+      return makeNote(
+        `arr-gen-${noteCounter++}`,
+        startTime,
+        duration,
+        item.string,
+        adjustedFret,
+        tech,
+        0.95,
+        item.voice,
+        tuning,
+        capo
+      );
+    });
+
+    return {
+      measure_number: barIdx + 1,
+      start_time: mStart,
+      end_time: mEnd,
+      notes,
+    };
+  });
+
+  const slugStyle = style.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const slugDiff = difficulty.toLowerCase();
+  const arrangement_id = `arr-${slugStyle}-${slugDiff}-capo${capo}-t${Math.round(
+    tempoScale * 100
+  )}`;
+
+  const chords_used = STYLE_CHORD_MAP[style] || STYLE_CHORD_MAP.Fingerstyle;
+
+  return {
+    arrangement_id,
+    title: `${style} Arrangement (${difficulty}${capo > 0 ? ` • Capo ${capo}` : ""})`,
+    style,
+    difficulty,
+    description: STYLE_DESCRIPTION_MAP[style](difficulty, capo, tempoScale),
+    chords_used,
+    tablature: {
+      tuning,
+      capo,
+      difficulty,
+      measures,
+      ascii_tab: generateAsciiTab(measures, tuning),
+    },
+  };
+}
 export const CHORD_DIAGRAM_DICTIONARY: Record<string, ChordDiagram> = {
   G: {
     chord: "G",
@@ -641,6 +1052,10 @@ export const MOCK_ANALYSIS_RESPONSE: AnalysisResponse = {
     measures: NEO_SOUL_G_MEASURES,
     ascii_tab: generateAsciiTab(NEO_SOUL_G_MEASURES, DEFAULT_GUITAR_TUNING),
   },
+  arrangements: [
+    DEFAULT_FINGERSTYLE_ARRANGEMENT,
+    DEFAULT_NEO_SOUL_ARRANGEMENT,
+  ],
 };
 
 export const PRESET_TRACKS: Record<string, AnalysisResponse> = {
@@ -710,6 +1125,20 @@ export const PRESET_TRACKS: Record<string, AnalysisResponse> = {
       measures: ACOUSTIC_C_MEASURES,
       ascii_tab: generateAsciiTab(ACOUSTIC_C_MEASURES, DEFAULT_GUITAR_TUNING),
     },
+    arrangements: [
+      buildMockArrangementVariation({
+        style: "Fingerstyle",
+        difficulty: "Intermediate",
+        capo: 0,
+        tempo_scale: 1.0,
+      }),
+      buildMockArrangementVariation({
+        style: "Acoustic Strumming",
+        difficulty: "Beginner",
+        capo: 2,
+        tempo_scale: 1.0,
+      }),
+    ],
   },
   "jazz-ii-v-i": {
     job_id: "job_jazz_standard_03",
@@ -766,6 +1195,15 @@ export const PRESET_TRACKS: Record<string, AnalysisResponse> = {
       measures: JAZZ_MEASURES,
       ascii_tab: generateAsciiTab(JAZZ_MEASURES, DEFAULT_GUITAR_TUNING),
     },
+    arrangements: [
+      buildMockArrangementVariation({
+        style: "Jazz Chord Melody",
+        difficulty: "Advanced",
+        capo: 0,
+        tempo_scale: 1.0,
+      }),
+      DEFAULT_FINGERSTYLE_ARRANGEMENT,
+    ],
   },
 };
 

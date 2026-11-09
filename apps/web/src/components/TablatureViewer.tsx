@@ -3,15 +3,19 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   DEFAULT_GUITAR_TUNING,
+  ExportFormat,
   TabDifficulty,
   TabNote,
   TabNoteEdit,
   TablatureData,
   TablatureUpdateRequest,
+  VoiceFilterMode,
+  VoiceRole,
 } from "../types";
-import { getTechniqueSymbol } from "../lib/tab-utils";
+import { getTechniqueSymbol, resolveNoteVoice } from "../lib/tab-utils";
 import { guitarSynth } from "../lib/synth";
 import { InteractiveTabEditor } from "./InteractiveTabEditor";
+import { ExportHubBar } from "./ExportHubBar";
 import {
   FileText,
   Play,
@@ -24,38 +28,47 @@ import {
   X,
   Gauge,
   Sparkles,
+  Filter,
 } from "lucide-react";
 
 interface TablatureViewerProps {
   jobId: string;
   filename: string;
+  activeTitle?: string;
+  activeArrangementId?: string | null;
   tablature: TablatureData;
   currentTime: number;
   isMainPlayerPlaying: boolean;
   onSeekMainPlayer?: (time: number) => void;
   onUpdateTablature: (payload: TablatureUpdateRequest) => Promise<void>;
+  onExportFormat?: (format: ExportFormat) => Promise<void>;
 }
 
 const STRING_NUMBERS = [1, 2, 3, 4, 5, 6]; // 1 = High E4 (top), 6 = Low E2 (bottom)
 const DEFAULT_TOP_DOWN_LABELS = ["E4", "B3", "G3", "D3", "A2", "E2"];
 
 export function TablatureViewer({
+  jobId,
   filename,
+  activeTitle,
+  activeArrangementId = null,
   tablature,
   currentTime,
   isMainPlayerPlaying,
   onSeekMainPlayer,
   onUpdateTablature,
+  onExportFormat,
 }: TablatureViewerProps) {
   // Interactive Edit & Selection State
   const [editMode, setEditMode] = useState<boolean>(true);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
 
-  // Standalone Web Audio Tab Synth Playback State
+  // Standalone Web Audio Tab Synth Playback & Polyphonic Voice Filter State
   const [isSynthPlaying, setIsSynthPlaying] = useState<boolean>(false);
   const [synthTime, setSynthTime] = useState<number>(0);
   const [synthSpeed, setSynthSpeed] = useState<number>(1.0);
+  const [voiceFilter, setVoiceFilter] = useState<VoiceFilterMode>("all");
 
   // ASCII Tab Modal / Drawer State
   const [showAsciiModal, setShowAsciiModal] = useState<boolean>(false);
@@ -126,6 +139,7 @@ export function TablatureViewer({
       startTime: 0,
       tuning: tablature.tuning,
       capo: tablature.capo,
+      voiceFilter,
       onTimeUpdate: (t) => {
         setSynthTime(t);
       },
@@ -139,6 +153,11 @@ export function TablatureViewer({
   const handleSpeedChange = (nextSpeed: number) => {
     setSynthSpeed(nextSpeed);
     guitarSynth.setTabPlaybackSpeed(nextSpeed);
+  };
+
+  const handleVoiceFilterChange = (nextFilter: VoiceFilterMode) => {
+    setVoiceFilter(nextFilter);
+    guitarSynth.setVoiceFilter(nextFilter);
   };
 
   // Click handler for any TabNote on the 6-string staff
@@ -231,6 +250,44 @@ export function TablatureViewer({
     }
   };
 
+  const getVoiceNoteCardStyle = (
+    voice: VoiceRole,
+    isNoteActive: boolean,
+    isNoteSelected: boolean,
+    isMutedByFilter: boolean
+  ) => {
+    if (isNoteActive) {
+      return "bg-amber-400 text-slate-950 border-white scale-125 shadow-[0_0_16px_rgba(251,191,36,0.9)]";
+    }
+    if (isNoteSelected) {
+      return "bg-indigo-500 text-white border-amber-300 scale-110 shadow-lg shadow-indigo-500/40";
+    }
+    const dimClass = isMutedByFilter ? "opacity-30" : "";
+    switch (voice) {
+      case "bass":
+        return `bg-amber-950/90 hover:bg-amber-900/90 text-amber-300 border-amber-500/60 hover:border-amber-300 ${dimClass}`;
+      case "melody":
+        return `bg-sky-950/90 hover:bg-sky-900/90 text-sky-300 border-sky-500/60 hover:border-sky-300 ${dimClass}`;
+      case "harmony":
+        return `bg-emerald-950/90 hover:bg-emerald-900/90 text-emerald-300 border-emerald-500/60 hover:border-emerald-300 ${dimClass}`;
+      case "percussive":
+        return `bg-rose-950/90 hover:bg-rose-900/90 text-rose-300 border-rose-500/60 hover:border-rose-300 ${dimClass}`;
+    }
+  };
+
+  const getVoiceRoleShortTag = (voice: VoiceRole) => {
+    switch (voice) {
+      case "bass":
+        return { tag: "B", color: "text-amber-300 border-amber-500/40 bg-amber-500/15" };
+      case "melody":
+        return { tag: "M", color: "text-sky-300 border-sky-500/40 bg-sky-500/15" };
+      case "harmony":
+        return { tag: "H", color: "text-emerald-300 border-emerald-500/40 bg-emerald-500/15" };
+      case "percussive":
+        return { tag: "P", color: "text-rose-300 border-rose-500/40 bg-rose-500/15" };
+    }
+  };
+
   return (
     <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-md shadow-2xl space-y-5">
       {/* Header & Studio Controls */}
@@ -285,7 +342,7 @@ export function TablatureViewer({
             </button>
 
             {/* Tempo Speed Selector (0.5x, 0.75x, 1.0x) */}
-            <div className="flex items-center gap-1 px-2 text-xs font-mono text-slate-400">
+            <div className="flex items-center gap-1 px-2 text-xs font-mono text-slate-400 border-r border-slate-800">
               <Gauge className="w-3.5 h-3.5 text-amber-400" />
               <select
                 aria-label="Tab Synth Tempo Speed"
@@ -304,6 +361,35 @@ export function TablatureViewer({
                 </option>
                 <option value="1.25" className="bg-slate-900">
                   1.25x Fast
+                </option>
+              </select>
+            </div>
+
+            {/* Polyphonic Voice Filter / Practice Mute Selector */}
+            <div className="flex items-center gap-1 px-2 text-xs font-mono text-slate-400">
+              <Filter className="w-3.5 h-3.5 text-sky-400" />
+              <select
+                aria-label="Tab Synth Voice Filter"
+                value={voiceFilter}
+                onChange={(e) =>
+                  handleVoiceFilterChange(e.target.value as VoiceFilterMode)
+                }
+                className="bg-transparent text-slate-200 font-mono text-xs focus:outline-none cursor-pointer"
+              >
+                <option value="all" className="bg-slate-900">
+                  All Voices
+                </option>
+                <option value="bass" className="bg-slate-900">
+                  Bass Only (Thumb)
+                </option>
+                <option value="melody" className="bg-slate-900">
+                  Melody Only (Lead)
+                </option>
+                <option value="harmony" className="bg-slate-900">
+                  Harmony Only (Inner)
+                </option>
+                <option value="percussive" className="bg-slate-900">
+                  Percussive Only
                 </option>
               </select>
             </div>
@@ -335,37 +421,71 @@ export function TablatureViewer({
         </div>
       </div>
 
-      {/* Articulation Legend & Playhead Status Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-slate-400 bg-slate-950/60 border border-slate-800/80 rounded-xl px-3.5 py-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-slate-300 font-semibold">Articulations:</span>
-          <span className="inline-flex items-center gap-1">
-            <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              h
-            </span>{" "}
-            Hammer-On
+      {/* Polyphonic Voice Legend, Filter Pill Bar & Articulation Status */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-slate-400 bg-slate-950/60 border border-slate-800/80 rounded-xl px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-300 font-semibold">
+            Polyphonic Voices (Click to Solo):
           </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
-              p
-            </span>{" "}
-            Pull-Off
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-              /
-            </span>{" "}
-            Slide
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-              b
-            </span>{" "}
-            Bend
-          </span>
+          {(
+            [
+              {
+                mode: "all" as VoiceFilterMode,
+                label: "All Voices",
+                style: "bg-slate-800 text-slate-200 border-slate-700",
+              },
+              {
+                mode: "bass" as VoiceFilterMode,
+                label: "Bass (Thumb S4–6)",
+                style: "bg-amber-500/15 text-amber-300 border-amber-500/40",
+              },
+              {
+                mode: "melody" as VoiceFilterMode,
+                label: "Melody (Lead S1–3)",
+                style: "bg-sky-500/15 text-sky-300 border-sky-500/40",
+              },
+              {
+                mode: "harmony" as VoiceFilterMode,
+                label: "Harmony (Inner)",
+                style: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
+              },
+              {
+                mode: "percussive" as VoiceFilterMode,
+                label: "Percussive",
+                style: "bg-rose-500/15 text-rose-300 border-rose-500/40",
+              },
+            ] as const
+          ).map((v) => {
+            const active = voiceFilter === v.mode;
+            return (
+              <button
+                key={v.mode}
+                type="button"
+                onClick={() => handleVoiceFilterChange(v.mode)}
+                className={`px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                  active
+                    ? `${v.style} ring-1 ring-amber-400 font-bold`
+                    : `${v.style} opacity-75 hover:opacity-100`
+                }`}
+              >
+                {v.label}
+              </button>
+            );
+          })}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="hidden md:inline-flex items-center gap-2 text-[10px]">
+            <span>Articulations:</span>
+            <span className="px-1 rounded bg-emerald-500/20 text-emerald-300">
+              h
+            </span>
+            <span className="px-1 rounded bg-sky-500/20 text-sky-300">p</span>
+            <span className="px-1 rounded bg-purple-500/20 text-purple-300">
+              /
+            </span>
+            <span className="px-1 rounded bg-rose-500/20 text-rose-300">b</span>
+          </span>
           <span className="text-amber-400">
             Playhead: <strong>{activeTime.toFixed(2)}s</strong>
           </span>
@@ -499,21 +619,25 @@ export function TablatureViewer({
                             const isNoteSelected =
                               selectedNoteId === note.id;
                             const techSym = getTechniqueSymbol(note.technique);
+                            const voiceRole = resolveNoteVoice(note);
+                            const isMutedByFilter =
+                              voiceFilter !== "all" &&
+                              voiceRole !== voiceFilter;
+                            const voiceBadge = getVoiceRoleShortTag(voiceRole);
 
                             return (
                               <button
                                 key={note.id}
                                 type="button"
                                 onClick={(e) => handleNoteClick(note, e)}
-                                title={`Note ${note.note_name} (MIDI ${note.midi}) • String ${note.string}, Fret ${note.fret} • Technique: ${note.technique} • Click to edit`}
+                                title={`Note ${note.note_name} (MIDI ${note.midi}) • Voice: ${voiceRole} • String ${note.string}, Fret ${note.fret} • Technique: ${note.technique} • Click to edit`}
                                 style={{ left: `${relPos * 100}%` }}
-                                className={`group absolute -translate-x-1/2 z-20 flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-lg font-mono text-xs font-extrabold transition-all cursor-pointer border ${
-                                  isNoteActive
-                                    ? "bg-amber-400 text-slate-950 border-white scale-125 shadow-[0_0_16px_rgba(251,191,36,0.9)]"
-                                    : isNoteSelected
-                                    ? "bg-indigo-500 text-white border-amber-300 scale-110 shadow-lg shadow-indigo-500/40"
-                                    : "bg-slate-900 hover:bg-slate-800 text-amber-300 border-slate-700 hover:border-amber-400"
-                                }`}
+                                className={`group absolute -translate-x-1/2 z-20 flex items-center justify-center min-w-[30px] h-7 px-1.5 rounded-lg font-mono text-xs font-extrabold transition-all cursor-pointer border ${getVoiceNoteCardStyle(
+                                  voiceRole,
+                                  isNoteActive,
+                                  isNoteSelected,
+                                  isMutedByFilter
+                                )}`}
                               >
                                 <span>{note.fret}</span>
 
@@ -527,6 +651,13 @@ export function TablatureViewer({
                                     {techSym}
                                   </span>
                                 )}
+
+                                {/* Polyphonic Voice Role Micro-Indicator (B / M / H / P) */}
+                                <span
+                                  className={` -top-2 -right-1.5 absolute text-[8px] leading-none px-1 py-0.5 rounded border font-mono font-bold pointer-events-none ${voiceBadge.color}`}
+                                >
+                                  {voiceBadge.tag}
+                                </span>
 
                                 {/* Subtle Note Pitch Name Tag below on hover or selection */}
                                 <span
@@ -590,6 +721,16 @@ export function TablatureViewer({
             </button>
           )}
         </div>
+      )}
+
+      {/* Phase 3 Multi-Format Export Hub (MIDI, MusicXML, PDF, ASCII) */}
+      {onExportFormat && (
+        <ExportHubBar
+          jobId={jobId}
+          activeArrangementId={activeArrangementId}
+          activeTitle={activeTitle || filename}
+          onExportFormat={onExportFormat}
+        />
       )}
 
       {/* Optional Inline ASCII Tab Drawer */}

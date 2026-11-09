@@ -6,12 +6,15 @@ import { AudioUpload } from "../components/AudioUpload";
 import { MetadataCard } from "../components/MetadataCard";
 import { AudioPlayerTimeline } from "../components/AudioPlayerTimeline";
 import { TablatureViewer } from "../components/TablatureViewer";
+import { ArrangementStudioPanel } from "../components/ArrangementStudioPanel";
 import { ChordVoicingDiagram } from "../components/ChordVoicingDiagram";
 import { ImprovisationPanel } from "../components/ImprovisationPanel";
 import { GuitarFretboard } from "../components/GuitarFretboard";
 import {
   AnalysisResponse,
+  ArrangementRequest,
   ChordData,
+  ExportFormat,
   TablatureUpdateRequest,
   UploadProgressState,
 } from "../types";
@@ -34,6 +37,10 @@ export default function Home() {
   );
   const [selectedVoicingChord, setSelectedVoicingChord] = useState<string>("G");
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  // Active arrangement variation ID (null = Original Transcription Tab)
+  const [activeArrangementId, setActiveArrangementId] = useState<string | null>(
+    null
+  );
 
   // Synchronized Playback Time & Seek State between AudioPlayerTimeline and TablatureViewer
   const [currentTime, setCurrentTime] = useState<number>(0);
@@ -63,6 +70,25 @@ export default function Home() {
     }
   }, [theme]);
 
+  // Resolve currently active arrangement variation and tablature data
+  const activeArrangement = useMemo(() => {
+    if (!activeArrangementId) return null;
+    return (
+      (analysisData.arrangements || []).find(
+        (a) => a.arrangement_id === activeArrangementId
+      ) || null
+    );
+  }, [analysisData.arrangements, activeArrangementId]);
+
+  const activeTablature = useMemo(() => {
+    return activeArrangement ? activeArrangement.tablature : analysisData.tablature;
+  }, [activeArrangement, analysisData.tablature]);
+
+  const activeTabTitle = useMemo(() => {
+    return activeArrangement
+      ? `${activeArrangement.title} (${activeArrangement.style})`
+      : `Original Transcription Tab (${analysisData.metadata.filename})`;
+  }, [activeArrangement, analysisData.metadata.filename]);
   // Calculate average AI confidence
   const averageConfidence = useMemo(() => {
     if (!analysisData.chords || analysisData.chords.length === 0) return 0.92;
@@ -94,6 +120,7 @@ export default function Home() {
       });
 
       setAnalysisData(response);
+      setActiveArrangementId(null);
       if (response.chords && response.chords.length > 0) {
         setActiveChord(response.chords[0]);
         setSelectedVoicingChord(response.chords[0].chord);
@@ -104,7 +131,7 @@ export default function Home() {
         stage: "completed",
       });
       setStatusNotice(
-        `Analyzed "${file.name}": ${response.chords.length} chords, ${response.chord_diagrams.length} voicing diagrams & ${response.tablature.measures.length} tab measures!`
+        `Analyzed "${file.name}": ${response.chords.length} chords, ${response.chord_diagrams.length} voicing diagrams, ${response.tablature.measures.length} tab measures & ${(response.arrangements || []).length} AI arrangements!`
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
@@ -121,7 +148,28 @@ export default function Home() {
   // Handle Interactive Tablature Edit (PUT /api/v1/analyze/{job_id}/tablature)
   const handleUpdateTablature = useCallback(
     async (payload: TablatureUpdateRequest) => {
-      // 1. Immediate optimistic UI update
+      if (activeArrangementId) {
+        // Update the active arrangement variation's tablature locally
+        setAnalysisData((prev) => ({
+          ...prev,
+          arrangements: (prev.arrangements || []).map((arr) =>
+            arr.arrangement_id === activeArrangementId
+              ? {
+                  ...arr,
+                  tablature: applyTablatureUpdate(arr.tablature, payload),
+                }
+              : arr
+          ),
+        }));
+        setStatusNotice(
+          `Updated note & regenerated ASCII tab in arrangement "${
+            activeArrangement?.title || activeArrangementId
+          }".`
+        );
+        return;
+      }
+
+      // 1. Immediate optimistic UI update on primary tablature
       setAnalysisData((prev) => ({
         ...prev,
         tablature: applyTablatureUpdate(prev.tablature, payload),
@@ -138,7 +186,68 @@ export default function Home() {
       setAnalysisData(result.analysis);
       setStatusNotice(result.notice);
     },
+    [analysisData, mockMode, activeArrangementId, activeArrangement]
+  );
+
+  // Handle Phase 3 AI Arrangement Generation (POST /api/v1/analyze/{job_id}/arrange)
+  const handleGenerateArrangement = useCallback(
+    async (request: ArrangementRequest) => {
+      const result = await api.generateArrangement(
+        analysisData.job_id,
+        request,
+        analysisData,
+        mockMode
+      );
+
+      setAnalysisData((prev) => {
+        const existingList = prev.arrangements || [];
+        const existingIdx = existingList.findIndex(
+          (a) => a.arrangement_id === result.variation.arrangement_id
+        );
+        const nextArrangements =
+          existingIdx >= 0
+            ? existingList.map((item, idx) =>
+                idx === existingIdx ? result.variation : item
+              )
+            : [...existingList, result.variation];
+
+        return {
+          ...prev,
+          arrangements: nextArrangements,
+        };
+      });
+
+      setActiveArrangementId(result.variation.arrangement_id);
+      if (result.variation.chords_used?.[0]) {
+        setSelectedVoicingChord(result.variation.chords_used[0]);
+      }
+      setStatusNotice(result.notice);
+    },
     [analysisData, mockMode]
+  );
+
+  // Handle Phase 3 Multi-Format Export (GET /api/v1/analyze/{job_id}/export?format=<fmt>&arrangement_id=<id>)
+  const handleExportFormat = useCallback(
+    async (format: ExportFormat) => {
+      const result = await api.exportTablature({
+        jobId: analysisData.job_id,
+        format,
+        arrangementId: activeArrangementId,
+        activeTablature,
+        analysis: analysisData,
+        activeTitle: activeArrangement?.title || analysisData.metadata.filename,
+        activeStyle: activeArrangement?.style || "Original Transcription",
+        mockMode,
+      });
+      setStatusNotice(result.notice);
+    },
+    [
+      analysisData,
+      activeArrangementId,
+      activeTablature,
+      activeArrangement,
+      mockMode,
+    ]
   );
 
   // Reset to empty state
@@ -156,12 +265,13 @@ export default function Home() {
     const preset = PRESET_TRACKS[presetKey] || MOCK_ANALYSIS_RESPONSE;
     setUploadedFile(null);
     setAnalysisData(preset);
+    setActiveArrangementId(null);
     if (preset.chords.length > 0) {
       setActiveChord(preset.chords[0]);
       setSelectedVoicingChord(preset.chords[0].chord);
     }
     setStatusNotice(
-      `Loaded Phase 2 preset: "${preset.metadata.filename}" (${preset.tablature.measures.length} tab measures)`
+      `Loaded Phase 3 preset: "${preset.metadata.filename}" (${preset.tablature.measures.length} tab measures & ${(preset.arrangements || []).length} AI arrangements)`
     );
   };
 
@@ -271,16 +381,32 @@ export default function Home() {
           />
         </section>
 
-        {/* 4. Phase 2: Interactive 6-String Guitar Tablature Viewer, Editor & Web Audio Tab Synth */}
+        {/* 4. Phase 3: AI Guitar Arrangement Studio & Variation Switcher */}
+        <section aria-label="AI Guitar Arrangement Studio Panel">
+          <ArrangementStudioPanel
+            jobId={analysisData.job_id}
+            originalTablature={analysisData.tablature}
+            arrangements={analysisData.arrangements || []}
+            activeArrangementId={activeArrangementId}
+            onSelectArrangement={(arrId) => setActiveArrangementId(arrId)}
+            onGenerateArrangement={handleGenerateArrangement}
+            onSelectChordForDiagram={(chord) => setSelectedVoicingChord(chord)}
+          />
+        </section>
+
+        {/* 5. Phase 2 & 3: Interactive 6-String Guitar Tablature Viewer, Polyphonic Voices, Web Audio Tab Synth & Multi-Format Export Hub */}
         <section aria-label="Interactive Guitar Tablature Viewer and Editor">
           <TablatureViewer
             jobId={analysisData.job_id}
             filename={analysisData.metadata.filename}
-            tablature={analysisData.tablature}
+            activeTitle={activeTabTitle}
+            activeArrangementId={activeArrangementId}
+            tablature={activeTablature}
             currentTime={currentTime}
             isMainPlayerPlaying={isPlaying}
             onSeekMainPlayer={handleSeekFromTab}
             onUpdateTablature={handleUpdateTablature}
+            onExportFormat={handleExportFormat}
           />
         </section>
 
@@ -327,9 +453,11 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-500">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Arpegia Platform • Phase 2 Guitar Intelligence</span>
+            <span>Arpegia Platform • Phase 3 AI Music Intelligence</span>
             <span className="text-slate-700">|</span>
-            <span>Tablature Studio • SVG Chord Voicings • Web Audio Synth</span>
+            <span>
+              Arrangement Studio • Polyphonic Voices • Multi-Format Export Hub
+            </span>
           </div>
 
           <div className="flex items-center gap-3">

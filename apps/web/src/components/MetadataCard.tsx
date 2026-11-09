@@ -29,7 +29,6 @@ export function MetadataCard({
   // Metronome visual pulse synced to BPM
   useEffect(() => {
     if (!isPlaying || !metadata.bpm) {
-      setPulse(false);
       return;
     }
     const bpm = metadata.bpm;
@@ -50,6 +49,8 @@ export function MetadataCard({
       setPulse(false);
     };
   }, [isPlaying, metadata.bpm]);
+
+  const activePulse = isPlaying && pulse;
 
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -120,7 +121,7 @@ export function MetadataCard({
             </span>
             <div
               className={`p-1.5 rounded-lg transition-colors duration-100 ${
-                pulse
+                activePulse
                   ? "bg-rose-500 text-white scale-110 shadow-lg shadow-rose-500/50"
                   : "bg-rose-500/10 text-rose-400"
               }`}
@@ -137,7 +138,7 @@ export function MetadataCard({
           <div className="mt-2 flex items-center gap-1.5">
             <span
               className={`w-2 h-2 rounded-full transition-all duration-100 ${
-                pulse ? "bg-rose-400 scale-125" : "bg-slate-700"
+                activePulse ? "bg-rose-400 scale-125" : "bg-slate-700"
               }`}
             />
             <span className="text-[10px] font-mono text-slate-400">

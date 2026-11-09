@@ -5,6 +5,7 @@ import {
   TabTechnique,
   TablatureData,
   TablatureUpdateRequest,
+  VoiceRole,
 } from "../types";
 
 const PITCH_CLASSES = [
@@ -111,6 +112,34 @@ export function getTechniqueLabel(technique: TabTechnique): string {
       return "Bend (b)";
     default:
       return "Normal";
+  }
+}
+
+export function resolveNoteVoice(note: Pick<TabNote, "voice" | "string">): VoiceRole {
+  if (
+    note.voice === "bass" ||
+    note.voice === "melody" ||
+    note.voice === "harmony" ||
+    note.voice === "percussive"
+  ) {
+    return note.voice;
+  }
+  if (note.string >= 5) return "bass";
+  if (note.string <= 2) return "melody";
+  return "harmony";
+}
+
+export function getVoiceLabel(voice?: VoiceRole): string {
+  switch (voice) {
+    case "bass":
+      return "Bass (Thumb)";
+    case "harmony":
+      return "Harmony (Inner)";
+    case "percussive":
+      return "Percussive";
+    case "melody":
+    default:
+      return "Melody (Lead)";
   }
 }
 
@@ -248,6 +277,8 @@ export function applyTablatureUpdate(
       const nextFret = Math.max(0, Math.min(24, edit?.fret ?? note.fret));
       const nextTechnique: TabTechnique =
         edit?.technique ?? note.technique ?? "normal";
+      const nextVoice: VoiceRole =
+        edit?.voice ?? resolveNoteVoice({ voice: note.voice, string: nextString });
       const nextStartTime = edit?.start_time ?? note.start_time;
       const nextDuration = edit?.duration ?? note.duration;
 
@@ -263,6 +294,7 @@ export function applyTablatureUpdate(
         string: nextString,
         fret: nextFret,
         technique: nextTechnique,
+        voice: nextVoice,
         start_time: nextStartTime,
         duration: nextDuration,
         midi,

@@ -35,11 +35,11 @@ export function Navbar({
                 ARPEGIA
               </span>
               <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                Phase 2 Guitar Intelligence
+                Phase 3 AI Music Intelligence
               </span>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">
-              AI-Powered Tablature Studio, Chord Voicings &amp; Web Audio Synth
+              Arrangement Studio • Polyphonic Voices • Multi-Format Export Hub
             </p>
           </div>
         </div>

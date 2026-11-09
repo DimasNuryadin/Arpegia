@@ -1,5 +1,5 @@
 /**
- * @arpegia/shared-types — Physical TypeScript Contracts (Phase 1 & Phase 2)
+ * @arpegia/shared-types — Physical TypeScript Contracts (Phase 1, Phase 2 & Phase 3)
  * Mirrored inside apps/web/src/types/index.ts in strict alignment with packages/shared-types/index.ts
  */
 
@@ -44,7 +44,19 @@ export type TabTechnique =
   | "slide"
   | "bend";
 
-export type TabDifficulty = "Beginner" | "Intermediate" | "Advanced";
+export type DifficultyLevel = "Beginner" | "Intermediate" | "Advanced";
+
+export type TabDifficulty = DifficultyLevel;
+
+export type ArrangementStyle =
+  | "Fingerstyle"
+  | "Neo Soul"
+  | "Jazz Chord Melody"
+  | "Acoustic Strumming";
+
+export type ExportFormat = "midi" | "musicxml" | "ascii" | "pdf";
+
+export type VoiceRole = "melody" | "bass" | "harmony" | "percussive";
 
 export const DEFAULT_GUITAR_TUNING: string[] = [
   "E2",
@@ -65,6 +77,7 @@ export interface TabNote {
   note_name: string; // e.g., "E4", "G#3"
   confidence: number; // 0.0 to 1.0
   technique: TabTechnique;
+  voice?: VoiceRole; // default "melody", polyphonic Fingerstyle role ("melody" | "bass" | "harmony" | "percussive")
 }
 
 export interface TabMeasure {
@@ -77,7 +90,7 @@ export interface TabMeasure {
 export interface TablatureData {
   tuning: string[]; // default ["E2", "A2", "D3", "G3", "B3", "E4"]
   capo: number; // default 0
-  difficulty: TabDifficulty;
+  difficulty: DifficultyLevel;
   measures: TabMeasure[];
   ascii_tab: string; // pre-rendered 6-line ASCII tablature preview for export/quick view
 }
@@ -87,6 +100,7 @@ export interface TabNoteEdit {
   string: number; // 1 to 6, where 1 = High E4 and 6 = Low E2
   fret: number; // 0 to 24
   technique?: TabTechnique;
+  voice?: VoiceRole;
   start_time?: number;
   duration?: number;
 }
@@ -94,7 +108,7 @@ export interface TabNoteEdit {
 export interface TablatureUpdateRequest {
   tuning?: string[];
   capo?: number;
-  difficulty?: TabDifficulty;
+  difficulty?: DifficultyLevel;
   measures?: TabMeasure[];
   notes?: TabNoteEdit[];
 }
@@ -126,7 +140,7 @@ export interface ChordProgressionAnalysis {
   chords: ChordEvent[];
 }
 
-// Phase 1 & Phase 2 Shared Data Contract (Web <-> API <-> Audio Engine)
+// Phase 1, Phase 2 & Phase 3 Shared Data Contract (Web <-> API <-> Audio Engine)
 export interface SongMetadata {
   filename: string;
   duration: number; // in seconds
@@ -142,7 +156,14 @@ export interface ChordData {
   confidence: number; // between 0.0 and 1.0
 }
 
-export type MusicStyle = "Pop" | "Jazz" | "Neo Soul" | "Fingerstyle" | string;
+export type MusicStyle =
+  | "Pop"
+  | "Jazz"
+  | "Neo Soul"
+  | "Fingerstyle"
+  | "Jazz Chord Melody"
+  | "Acoustic Strumming"
+  | string;
 
 export interface ImprovisationData {
   original_chord: string;
@@ -157,6 +178,23 @@ export interface ChordDiagram {
   base_fret: number; // default 1
 }
 
+export interface ArrangementVariation {
+  arrangement_id: string;
+  title: string; // e.g., "Fingerstyle Solo Arrangement"
+  style: ArrangementStyle;
+  difficulty: DifficultyLevel;
+  description: string; // summary of voice leading, bassline pattern, and chord substitutions used
+  chords_used: string[];
+  tablature: TablatureData; // complete playable 6-string tab with measures, notes, and ascii_tab
+}
+
+export interface ArrangementRequest {
+  style: ArrangementStyle;
+  difficulty: DifficultyLevel;
+  capo?: number; // default 0, range 0 to 12
+  tempo_scale?: number; // default 1.0, range 0.5 to 1.5
+}
+
 export interface AnalysisResponse {
   job_id: string;
   status: "completed" | "processing" | "failed";
@@ -165,6 +203,7 @@ export interface AnalysisResponse {
   improvisations: ImprovisationData[];
   chord_diagrams: ChordDiagram[];
   tablature: TablatureData;
+  arrangements: ArrangementVariation[];
 }
 
 export interface ErrorDetail {
@@ -191,3 +230,11 @@ export interface ChordVoicingDetail {
   baseFret?: number;
   description?: string;
 }
+
+export type VoiceFilterMode =
+  | "all"
+  | "bass"
+  | "melody"
+  | "harmony"
+  | "percussive";
+

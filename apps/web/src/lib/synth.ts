@@ -6,8 +6,14 @@ import {
   TabMeasure,
   TabNote,
   TabTechnique,
+  VoiceFilterMode,
+  VoiceRole,
 } from "../types";
-import { computeMidiAndNoteName, midiToFrequency } from "./tab-utils";
+import {
+  computeMidiAndNoteName,
+  midiToFrequency,
+  resolveNoteVoice,
+} from "./tab-utils";
 
 // Note to frequency map
 const NOTE_FREQS: Record<string, number> = {
@@ -99,6 +105,7 @@ export interface TabPlaybackOptions {
   startTime?: number;
   tuning?: string[];
   capo?: number;
+  voiceFilter?: VoiceFilterMode;
   onTimeUpdate?: (currentTime: number) => void;
   onNoteTrigger?: (note: TabNote) => void;
   onComplete?: () => void;
@@ -109,6 +116,7 @@ class GuitarAudioEngine {
   private tabPlaybackRaf: number | null = null;
   private tabIsPlaying = false;
   private tabSpeed = 1.0;
+  private voiceFilter: VoiceFilterMode = "all";
 
   private initCtx(): AudioContext | null {
     if (typeof window === "undefined") return null;
@@ -299,36 +307,58 @@ class GuitarAudioEngine {
   }
 
   /**
-   * Play a single TabNote with string/fret/midi/technique articulation
+   * Play a single TabNote with string/fret/midi/technique/voice articulation
    */
   playTabNote(
     note: Pick<TabNote, "string" | "fret"> &
-      Partial<Pick<TabNote, "midi" | "duration" | "technique">>,
+      Partial<Pick<TabNote, "midi" | "duration" | "technique" | "voice">>,
     tuning: string[] = DEFAULT_GUITAR_TUNING,
     capo = 0
   ) {
     const ctx = this.initCtx();
     if (!ctx) return;
 
+    const voice: VoiceRole = resolveNoteVoice(note);
     const freq =
       typeof note.midi === "number" && note.midi > 0
         ? midiToFrequency(note.midi)
         : computeMidiAndNoteName(note.string, note.fret, tuning, capo)
             .frequency;
 
-    const dur = Math.max(0.35, Math.min(2.2, note.duration ?? 0.65));
+    const baseDur =
+      voice === "percussive"
+        ? 0.14
+        : voice === "bass"
+        ? Math.max(0.55, Math.min(2.6, (note.duration ?? 0.85) * 1.15))
+        : Math.max(0.35, Math.min(2.2, note.duration ?? 0.65));
+
+    const gainScale =
+      voice === "bass"
+        ? 0.27
+        : voice === "melody"
+        ? 0.25
+        : voice === "percussive"
+        ? 0.19
+        : 0.2;
+
     this.triggerPluckedVoice(
       ctx,
       freq,
       ctx.currentTime,
-      dur,
+      baseDur,
       note.technique ?? "normal",
-      0.24
+      gainScale
     );
   }
 
+  private matchesVoiceFilter(note: TabNote): boolean {
+    if (this.voiceFilter === "all") return true;
+    const role = resolveNoteVoice(note);
+    return role === this.voiceFilter;
+  }
+
   /**
-   * Standalone Tablature Synth Sequencer with variable speed (0.5x, 0.75x, 1.0x, 1.25x)
+   * Standalone Tablature Synth Sequencer with variable speed & polyphonic voice filtering
    */
   startTabPlayback(measures: TabMeasure[], options: TabPlaybackOptions = {}) {
     this.stopTabPlayback();
@@ -350,6 +380,7 @@ class GuitarAudioEngine {
     );
 
     this.tabSpeed = options.speed ?? 1.0;
+    this.voiceFilter = options.voiceFilter ?? this.voiceFilter ?? "all";
     this.tabIsPlaying = true;
 
     let songTime = options.startTime ?? 0;
@@ -372,19 +403,21 @@ class GuitarAudioEngine {
 
       options.onTimeUpdate?.(songTime);
 
-      // Trigger any notes whose start_time has been reached
+      // Trigger any notes whose start_time has been reached and match the active voice filter
       for (const note of allNotes) {
         if (!triggeredNoteIds.has(note.id) && songTime >= note.start_time) {
           triggeredNoteIds.add(note.id);
-          this.playTabNote(
-            {
-              ...note,
-              duration: Math.max(0.25, note.duration / this.tabSpeed),
-            },
-            options.tuning ?? DEFAULT_GUITAR_TUNING,
-            options.capo ?? 0
-          );
-          options.onNoteTrigger?.(note);
+          if (this.matchesVoiceFilter(note)) {
+            this.playTabNote(
+              {
+                ...note,
+                duration: Math.max(0.25, note.duration / this.tabSpeed),
+              },
+              options.tuning ?? DEFAULT_GUITAR_TUNING,
+              options.capo ?? 0
+            );
+            options.onNoteTrigger?.(note);
+          }
         }
       }
 
@@ -403,6 +436,14 @@ class GuitarAudioEngine {
 
   setTabPlaybackSpeed(speed: number) {
     this.tabSpeed = Math.max(0.25, Math.min(2.0, speed));
+  }
+
+  setVoiceFilter(filter: VoiceFilterMode) {
+    this.voiceFilter = filter;
+  }
+
+  getVoiceFilter(): VoiceFilterMode {
+    return this.voiceFilter;
   }
 
   stopTabPlayback() {

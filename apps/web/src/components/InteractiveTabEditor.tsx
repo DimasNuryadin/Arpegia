@@ -7,11 +7,14 @@ import {
   TabNote,
   TabNoteEdit,
   TabTechnique,
+  VoiceRole,
 } from "../types";
 import {
   computeMidiAndNoteName,
   getTechniqueLabel,
   getTechniqueSymbol,
+  getVoiceLabel,
+  resolveNoteVoice,
 } from "../lib/tab-utils";
 import { guitarSynth } from "../lib/synth";
 import {
@@ -46,6 +49,8 @@ const TECHNIQUES: TabTechnique[] = [
   "bend",
 ];
 
+const VOICE_ROLES: VoiceRole[] = ["bass", "melody", "harmony", "percussive"];
+
 const STRING_DESCRIPTIONS: Record<number, string> = {
   1: "1st (High E4)",
   2: "2nd (B3)",
@@ -72,6 +77,11 @@ export function InteractiveTabEditor({
   const [technique, setTechnique] = useState<TabTechnique>(
     selectedNote?.technique ?? "normal"
   );
+  const [voice, setVoice] = useState<VoiceRole>(
+    selectedNote
+      ? resolveNoteVoice(selectedNote)
+      : "melody"
+  );
   const [editCapo, setEditCapo] = useState<number>(capo);
   const [editDifficulty, setEditDifficulty] =
     useState<TabDifficulty>(difficulty);
@@ -86,7 +96,8 @@ export function InteractiveTabEditor({
     nextStr = stringNum,
     nextFret = fret,
     nextTech = technique,
-    nextCapo = editCapo
+    nextCapo = editCapo,
+    nextVoice = voice
   ) => {
     const { midi } = computeMidiAndNoteName(nextStr, nextFret, tuning, nextCapo);
     guitarSynth.playTabNote(
@@ -96,6 +107,7 @@ export function InteractiveTabEditor({
         midi,
         duration: selectedNote.duration || 0.65,
         technique: nextTech,
+        voice: nextVoice,
       },
       tuning,
       nextCapo
@@ -109,6 +121,7 @@ export function InteractiveTabEditor({
         string: stringNum,
         fret,
         technique,
+        voice,
       },
       {
         capo: editCapo,
@@ -347,6 +360,44 @@ export function InteractiveTabEditor({
                 </button>
               );
             })}
+          </div>
+
+          {/* Polyphonic Voice Role Selector */}
+          <div className="space-y-1.5 pt-1.5 border-t border-slate-800/80">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-slate-400">Polyphonic Voice:</span>
+              <span className="text-amber-300 font-bold">
+                {getVoiceLabel(voice)}
+              </span>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {VOICE_ROLES.map((r) => {
+                const isSelected = voice === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => {
+                      setVoice(r);
+                      handleAuditionPreview(
+                        stringNum,
+                        fret,
+                        technique,
+                        editCapo,
+                        r
+                      );
+                    }}
+                    className={`px-1.5 py-1 rounded text-[10px] font-mono font-semibold border transition-all cursor-pointer capitalize ${
+                      isSelected
+                        ? "bg-amber-500 text-slate-950 border-amber-300"
+                        : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Capo & Difficulty quick controls */}
