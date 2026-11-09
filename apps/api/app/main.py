@@ -4,8 +4,12 @@ Exposes REST endpoints for audio management, analysis orchestration,
 and guitar intelligence pipelines on Port 8000.
 """
 
-from typing import Any, Dict
-from fastapi import FastAPI, HTTPException, Request, status
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import json
+from typing import Any, AsyncGenerator, Dict
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +18,14 @@ from pydantic import BaseModel
 
 from app.api.v1 import api_v1_router
 from app.core.config import settings
+from app.services.analyzer_service import analyzer_service
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    """Store the running event loop for threadsafe subscriber broadcasting."""
+    analyzer_service.set_loop(asyncio.get_running_loop())
+    yield
 
 
 app = FastAPI(
@@ -23,6 +35,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 
 # Cross-Origin Resource Sharing (CORS)
@@ -147,3 +160,74 @@ async def root() -> Dict[str, Any]:
 
 # Register Version 1 Routers
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+
+
+async def _handle_websocket_stream(websocket: WebSocket, job_id: str) -> None:
+    """Stream real-time JobProgressEvent frames over WebSocket and close cleanly on completion."""
+    await websocket.accept()
+
+    if not analyzer_service.has_job_or_progress(job_id):
+        error_frame = {
+            "event": "job.failed",
+            "job_id": job_id,
+            "status": "failed",
+            "current_stage": "failed",
+            "overall_percent": 0,
+            "message": f"Analysis job '{job_id}' not found.",
+            "steps": [],
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "result": None,
+            "error": {
+                "code": "JOB_NOT_FOUND",
+                "message": f"Analysis job '{job_id}' not found.",
+                "details": {"job_id": job_id},
+            },
+        }
+        await websocket.send_text(json.dumps(error_frame))
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    queue: asyncio.Queue = asyncio.Queue()
+    analyzer_service.subscribe_progress(job_id, queue)
+
+    try:
+        current_snapshot = analyzer_service.get_progress(job_id)
+        if current_snapshot:
+            await websocket.send_text(current_snapshot.model_dump_json())
+            if (
+                current_snapshot.event in ("job.completed", "job.failed")
+                or current_snapshot.status in ("completed", "failed")
+            ):
+                await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+                return
+
+        while True:
+            event = await queue.get()
+            await websocket.send_text(event.model_dump_json())
+            if (
+                event.event in ("job.completed", "job.failed")
+                or event.status in ("completed", "failed")
+            ):
+                await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        except Exception:
+            pass
+    finally:
+        analyzer_service.unsubscribe_progress(job_id, queue)
+
+
+@app.websocket("/ws/analyze/{job_id}")
+async def websocket_analyze_progress(websocket: WebSocket, job_id: str) -> None:
+    """Canonical WebSocket endpoint on Port 8000 (ws://localhost:8000/ws/analyze/{job_id})."""
+    await _handle_websocket_stream(websocket, job_id)
+
+
+@app.websocket(f"{settings.API_V1_STR}/ws/analyze/{{job_id}}")
+async def websocket_analyze_progress_v1_alias(websocket: WebSocket, job_id: str) -> None:
+    """API v1 alias WebSocket endpoint (ws://localhost:8000/api/v1/ws/analyze/{job_id})."""
+    await _handle_websocket_stream(websocket, job_id)

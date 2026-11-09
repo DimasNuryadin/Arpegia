@@ -1,6 +1,6 @@
 """Chord analysis, job retrieval, interactive tablature editor, AI arrangement generation, and multi-format export API endpoints."""
 
-from typing import Optional
+from typing import Optional, Union
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 
 from app.schemas.analysis import (
@@ -9,6 +9,7 @@ from app.schemas.analysis import (
     ArrangementVariation,
     ErrorEnvelope,
     ExportFormat,
+    JobProgressEvent,
     TablatureUpdateRequest,
 )
 from app.services.analyzer_service import analyzer_service
@@ -19,24 +20,57 @@ router = APIRouter(prefix="/analyze", tags=["Guitar Intelligence & Chord Analysi
 
 @router.post(
     "",
-    response_model=AnalysisResponse,
+    response_model=Union[AnalysisResponse, JobProgressEvent],
     status_code=status.HTTP_200_OK,
     responses={
+        200: {"model": AnalysisResponse, "description": "Full analysis result (synchronous mode)"},
+        202: {"model": JobProgressEvent, "description": "Accepted analysis job with initial progress (asynchronous mode)"},
         400: {"model": ErrorEnvelope, "description": "Invalid audio format or MIME type"},
         413: {"model": ErrorEnvelope, "description": "Uploaded file exceeds 25MB limit"},
     },
     summary="Upload audio and run Guitar Intelligence pipeline",
     description=(
-        "Accepts an MP3 or WAV audio file (max 25MB), executes chord detection, "
-        "style improvisations, chord voicing diagrams, guitar tablature generation, "
-        "and at least 1 default Fingerstyle arrangement."
+        "Accepts an MP3 or WAV audio file (max 25MB). When async_mode=false (default), executes "
+        "synchronously and returns the complete AnalysisResponse. When async_mode=true, registers the job, "
+        "launches background execution, and returns the initial JobProgressEvent with job_id."
     ),
 )
 async def analyze_audio(
     file: UploadFile = File(..., description="Audio file to analyze (.mp3 or .wav, max 25MB)"),
-) -> AnalysisResponse:
+    async_mode: bool = Query(
+        False,
+        description="Enable asynchronous job execution and real-time progress streaming",
+    ),
+) -> Union[AnalysisResponse, JobProgressEvent]:
     """Handle audio upload and trigger chord, tablature, and default arrangement analysis."""
+    if async_mode:
+        return await analyzer_service.process_audio_upload_async(file)
     return await analyzer_service.process_audio_upload(file)
+
+
+@router.get(
+    "/{job_id}/progress",
+    response_model=JobProgressEvent,
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"model": ErrorEnvelope, "description": "Analysis job not found"},
+    },
+    summary="Poll analysis job progress (Phase 4)",
+    description="Retrieves the current JobProgressEvent snapshot for an analysis job.",
+)
+async def get_analysis_progress(job_id: str) -> JobProgressEvent:
+    """Retrieve current pipeline progress snapshot by unique job_id."""
+    progress = analyzer_service.get_progress(job_id)
+    if not progress:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "JOB_NOT_FOUND",
+                "message": f"Analysis job '{job_id}' not found.",
+                "details": {"job_id": job_id},
+            },
+        )
+    return progress
 
 
 @router.get(

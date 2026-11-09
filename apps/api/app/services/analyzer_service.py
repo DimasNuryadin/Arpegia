@@ -1,14 +1,18 @@
 """Audio analysis service orchestrating file storage, validation, engine execution, tab editing, and AI arrangement generation."""
 
+import asyncio
+from datetime import datetime, timezone
+import inspect
 import logging
 import os
 import re
 import sys
 import tempfile
+import threading
 import uuid
 import wave
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import anyio
 from fastapi import HTTPException, UploadFile, status
@@ -25,6 +29,10 @@ from app.schemas.analysis import (
     ChordItem,
     DifficultyLevel,
     ImprovisationItem,
+    JobProgressEvent,
+    PipelineStage,
+    PipelineStepInfo,
+    StageStatus,
     TabDifficultyType,
     TablatureData,
     TablatureUpdateRequest,
@@ -648,6 +656,41 @@ def _ensure_audio_engine_path() -> Optional[Path]:
 _ensure_audio_engine_path()
 
 
+ORDERED_PIPELINE_STAGES: List[Tuple[PipelineStage, str]] = [
+    ("separating_stems", "Separating Audio Stems (Demucs)"),
+    ("detecting_key_tempo", "Detecting Musical Key & Tempo"),
+    ("detecting_chords", "Recognizing Chords & Improvisations"),
+    ("transcribing_tablature", "Transcribing Guitar Tablature (Basic Pitch + Viterbi)"),
+    ("generating_arrangement", "Generating Fingerstyle Arrangement"),
+]
+
+STAGE_BOUNDS: Dict[str, Tuple[int, int]] = {
+    "separating_stems": (0, 25),
+    "detecting_key_tempo": (25, 40),
+    "detecting_chords": (40, 60),
+    "transcribing_tablature": (60, 85),
+    "generating_arrangement": (85, 100),
+}
+
+
+def create_initial_pipeline_steps() -> List[PipelineStepInfo]:
+    """Generate the 5 canonical pipeline steps in their initial state."""
+    return [
+        PipelineStepInfo(
+            stage=stage,
+            label=label,
+            status="in_progress" if stage == "separating_stems" else "pending",
+            progress_percent=20 if stage == "separating_stems" else 0,
+            detail=(
+                "Isolating guitar and bass tracks..."
+                if stage == "separating_stems"
+                else None
+            ),
+        )
+        for stage, label in ORDERED_PIPELINE_STAGES
+    ]
+
+
 class AnalyzerService:
     """Handles audio upload validation, temporary file persistence,
 
@@ -658,6 +701,183 @@ class AnalyzerService:
     def __init__(self) -> None:
         # In-memory job repository (automatic zero-dependency store)
         self._jobs: Dict[str, AnalysisResponse] = {}
+        # Thread-safe job progress registry and WebSocket subscribers (Phase 4)
+        self._progress_registry: Dict[str, JobProgressEvent] = {}
+        self._job_subscribers: Dict[str, List[asyncio.Queue]] = {}
+        self._lock = threading.RLock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Set the active asyncio event loop for threadsafe cross-thread scheduling."""
+        self._loop = loop
+
+    def get_progress(self, job_id: str) -> Optional[JobProgressEvent]:
+        """Retrieve real-time or completed JobProgressEvent snapshot by job_id."""
+        with self._lock:
+            event = self._progress_registry.get(job_id)
+            if event:
+                return event.model_copy(deep=True)
+
+        # Fallback check in stored jobs
+        job = self.get_job(job_id)
+        if job and job.progress:
+            return job.progress.model_copy(deep=True)
+        elif job:
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            steps = [
+                PipelineStepInfo(
+                    stage=s,
+                    label=l,
+                    status="completed",
+                    progress_percent=100,
+                    detail=f"{l} finished",
+                )
+                for s, l in ORDERED_PIPELINE_STAGES
+            ]
+            return JobProgressEvent(
+                event="job.completed",
+                job_id=job_id,
+                status="completed",
+                current_stage="completed",
+                overall_percent=100,
+                message="Analysis completed successfully!",
+                steps=steps,
+                updated_at=now_iso,
+                result=job,
+                error=None,
+            )
+        return None
+
+    def has_job_or_progress(self, job_id: str) -> bool:
+        """Check whether a job or progress snapshot exists for job_id."""
+        with self._lock:
+            if job_id in self._progress_registry:
+                return True
+        return job_id in self._jobs
+
+    def subscribe_progress(self, job_id: str, queue: asyncio.Queue) -> None:
+        """Register an asyncio.Queue to receive real-time JobProgressEvent frames."""
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        with self._lock:
+            if job_id not in self._job_subscribers:
+                self._job_subscribers[job_id] = []
+            self._job_subscribers[job_id].append(queue)
+
+    def unsubscribe_progress(self, job_id: str, queue: asyncio.Queue) -> None:
+        """Unregister a subscriber queue for a job."""
+        with self._lock:
+            if job_id in self._job_subscribers:
+                try:
+                    self._job_subscribers[job_id].remove(queue)
+                except ValueError:
+                    pass
+                if not self._job_subscribers[job_id]:
+                    self._job_subscribers.pop(job_id, None)
+
+    def _broadcast(self, job_id: str, event: JobProgressEvent) -> None:
+        """Thread-safe broadcast of a JobProgressEvent frame to all subscribed queues."""
+        with self._lock:
+            subscribers = list(self._job_subscribers.get(job_id, []))
+
+        for queue in subscribers:
+            try:
+                if self._loop and self._loop.is_running():
+                    self._loop.call_soon_threadsafe(queue.put_nowait, event)
+                else:
+                    queue.put_nowait(event)
+            except Exception as exc:
+                logger.debug("Failed delivering progress event to subscriber: %s", exc)
+
+    def update_job_progress(
+        self,
+        job_id: str,
+        stage: str,
+        percent: int,
+        message: str,
+        detail: Optional[str] = None,
+        result: Optional[AnalysisResponse] = None,
+        error: Optional[Dict[str, Any]] = None,
+    ) -> JobProgressEvent:
+        """Update job progress state and broadcast event to subscribers."""
+        with self._lock:
+            event = self._progress_registry.get(job_id)
+            if not event:
+                event = JobProgressEvent(
+                    event="job.progress",
+                    job_id=job_id,
+                    status="processing",
+                    current_stage="separating_stems",
+                    overall_percent=percent,
+                    message=message,
+                    steps=create_initial_pipeline_steps(),
+                    updated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
+                self._progress_registry[job_id] = event
+
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            event.updated_at = now_iso
+            event.overall_percent = min(100, max(0, percent))
+            if message:
+                event.message = message
+
+            stage_order = [s for s, _ in ORDERED_PIPELINE_STAGES]
+
+            if stage == "completed":
+                event.event = "job.completed"
+                event.status = "completed"
+                event.current_stage = "completed"
+                event.overall_percent = 100
+                for step in event.steps:
+                    step.status = "completed"
+                    step.progress_percent = 100
+                if result is not None:
+                    event.result = result
+            elif stage == "failed":
+                event.event = "job.failed"
+                event.status = "failed"
+                event.current_stage = "failed"
+                if error is not None:
+                    event.error = error
+                for step in reversed(event.steps):
+                    if step.status == "in_progress":
+                        step.status = "failed"
+                        if detail:
+                            step.detail = detail
+                        break
+            elif stage in stage_order:
+                current_idx = stage_order.index(stage)
+                event.event = "job.progress"
+                event.status = "processing"
+                event.current_stage = stage  # type: ignore
+
+                low, high = STAGE_BOUNDS.get(stage, (0, 100))
+                for idx, step in enumerate(event.steps):
+                    if idx < current_idx:
+                        step.status = "completed"
+                        step.progress_percent = 100
+                    elif idx == current_idx:
+                        if percent >= high:
+                            step.status = "completed"
+                            step.progress_percent = 100
+                        else:
+                            step.status = "in_progress"
+                            if high > low:
+                                step_pct = int(min(100, max(0, (percent - low) / (high - low) * 100)))
+                                step.progress_percent = max(step.progress_percent, step_pct)
+                        if detail:
+                            step.detail = detail
+                    else:
+                        step.status = "pending"
+                        step.progress_percent = 0
+
+            snapshot = event.model_copy(deep=True)
+
+        self._broadcast(job_id, snapshot)
+        return snapshot
 
     def get_job(self, job_id: str) -> Optional[AnalysisResponse]:
         """Retrieve an analysis job result by ID."""
@@ -829,7 +1049,10 @@ class AnalyzerService:
         return parsed
 
     def _run_audio_engine(
-        self, file_path: Path, original_filename: str
+        self,
+        file_path: Path,
+        original_filename: str,
+        progress_callback: Optional[Any] = None,
     ) -> Optional[
         Tuple[
             AnalysisMetadata,
@@ -845,11 +1068,28 @@ class AnalyzerService:
             _ensure_audio_engine_path()
             from engine.orchestrator import run_pipeline  # type: ignore
 
-            pipeline_output = run_pipeline(
-                file_path=str(file_path),
-                styles=["Neo Soul", "Jazz", "Pop", "Fingerstyle"],
-                filename=original_filename,
-            )
+            sig = inspect.signature(run_pipeline)
+            kwargs: Dict[str, Any] = {}
+            if "file_path" in sig.parameters:
+                kwargs["file_path"] = str(file_path)
+            elif "audio_path" in sig.parameters:
+                kwargs["audio_path"] = str(file_path)
+
+            if "filename" in sig.parameters:
+                kwargs["filename"] = original_filename
+            if "styles" in sig.parameters:
+                kwargs["styles"] = ["Neo Soul", "Jazz", "Pop", "Fingerstyle"]
+            if "progress_callback" in sig.parameters and progress_callback is not None:
+                kwargs["progress_callback"] = progress_callback
+
+            try:
+                pipeline_output = run_pipeline(**kwargs) if kwargs else run_pipeline(str(file_path))
+            except TypeError:
+                pipeline_output = run_pipeline(
+                    file_path=str(file_path),
+                    styles=["Neo Soul", "Jazz", "Pop", "Fingerstyle"],
+                    filename=original_filename,
+                )
 
             if not pipeline_output:
                 return None
@@ -1005,6 +1245,30 @@ class AnalyzerService:
                     arrangements,
                 ) = self.generate_fallback_analysis(original_filename, duration)
 
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            completed_steps = [
+                PipelineStepInfo(
+                    stage=s,
+                    label=l,
+                    status="completed",
+                    progress_percent=100,
+                    detail=f"{l} finished",
+                )
+                for s, l in ORDERED_PIPELINE_STAGES
+            ]
+            completed_progress = JobProgressEvent(
+                event="job.completed",
+                job_id=job_id,
+                status="completed",
+                current_stage="completed",
+                overall_percent=100,
+                message="Analysis completed successfully!",
+                steps=completed_steps,
+                updated_at=now_iso,
+                result=None,
+                error=None,
+            )
+
             response = AnalysisResponse(
                 job_id=job_id,
                 status="completed",
@@ -1014,11 +1278,178 @@ class AnalyzerService:
                 chord_diagrams=chord_diagrams,
                 tablature=tablature,
                 arrangements=arrangements,
+                progress=completed_progress,
             )
 
             self.save_job(response)
+            with self._lock:
+                self._progress_registry[job_id] = completed_progress
             return response
 
+        finally:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError as err:
+                    logger.warning("Could not delete temporary file %s: %s", temp_path, err)
+
+    async def process_audio_upload_async(self, file: UploadFile) -> JobProgressEvent:
+        """Handle audio upload for async execution: init JobProgressEvent and start background worker."""
+        job_id = str(uuid.uuid4())
+        original_filename = file.filename or "audio.mp3"
+
+        temp_path, _ = await self.save_temp_upload(file)
+
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        initial_steps = create_initial_pipeline_steps()
+
+        initial_event = JobProgressEvent(
+            event="job.progress",
+            job_id=job_id,
+            status="processing",
+            current_stage="separating_stems",
+            overall_percent=5,
+            message="Separating audio stems...",
+            steps=initial_steps,
+            updated_at=now_iso,
+            result=None,
+            error=None,
+        )
+
+        with self._lock:
+            self._progress_registry[job_id] = initial_event
+
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        asyncio.create_task(
+            self._execute_async_pipeline(job_id, temp_path, original_filename)
+        )
+
+        return initial_event
+
+    async def _execute_async_pipeline(
+        self,
+        job_id: str,
+        temp_path: Path,
+        original_filename: str,
+    ) -> None:
+        """Background worker running the pipeline and streaming progress updates."""
+        callback_called_stages: Set[str] = set()
+
+        def progress_callback(
+            stage: str, percent: int, message: str, detail: Optional[str] = None
+        ) -> None:
+            callback_called_stages.add(stage)
+            self.update_job_progress(job_id, stage, percent, message, detail)
+
+        try:
+            progress_callback(
+                "separating_stems",
+                10,
+                "Separating audio stems...",
+                "Isolating guitar and bass tracks...",
+            )
+
+            duration = self.extract_audio_duration(temp_path, original_filename)
+
+            engine_result = await anyio.to_thread.run_sync(
+                self._run_audio_engine, temp_path, original_filename, progress_callback
+            )
+
+            # Advance missing stages if audio-engine didn't emit all intermediate milestones
+            if "detecting_key_tempo" not in callback_called_stages:
+                progress_callback(
+                    "separating_stems", 25, "Separating audio stems finished.", "Stem separation finished"
+                )
+                progress_callback(
+                    "detecting_key_tempo", 35, "Detecting musical key and tempo...", "Analyzing key & tempo"
+                )
+            if "detecting_chords" not in callback_called_stages:
+                progress_callback(
+                    "detecting_key_tempo", 40, "Key & tempo detection completed.", "Key & tempo detected"
+                )
+                progress_callback(
+                    "detecting_chords", 55, "Recognizing chords and improvisations...", "Chroma harmonic analysis"
+                )
+            if "transcribing_tablature" not in callback_called_stages:
+                progress_callback(
+                    "detecting_chords", 60, "Chord recognition completed.", "Chords detected"
+                )
+                progress_callback(
+                    "transcribing_tablature", 75, "Transcribing guitar tablature...", "Viterbi fretboard optimization"
+                )
+            if "generating_arrangement" not in callback_called_stages:
+                progress_callback(
+                    "transcribing_tablature", 85, "Tablature transcription completed.", "Tablature generated"
+                )
+                progress_callback(
+                    "generating_arrangement", 95, "Generating fingerstyle arrangement...", "Synthesizing arrangement"
+                )
+
+            if engine_result is not None:
+                (
+                    metadata,
+                    chords,
+                    improvisations,
+                    chord_diagrams,
+                    tablature,
+                    arrangements,
+                ) = engine_result
+            else:
+                (
+                    metadata,
+                    chords,
+                    improvisations,
+                    chord_diagrams,
+                    tablature,
+                    arrangements,
+                ) = self.generate_fallback_analysis(original_filename, duration)
+
+            response = AnalysisResponse(
+                job_id=job_id,
+                status="completed",
+                metadata=metadata,
+                chords=chords,
+                improvisations=improvisations,
+                chord_diagrams=chord_diagrams,
+                tablature=tablature,
+                arrangements=arrangements,
+                progress=None,
+            )
+
+            self.save_job(response)
+
+            completed_event = self.update_job_progress(
+                job_id=job_id,
+                stage="completed",
+                percent=100,
+                message="Analysis completed successfully!",
+                detail="Pipeline completed successfully",
+                result=response,
+            )
+
+            response_copy = response.model_copy()
+            response_copy.progress = completed_event.model_copy(update={"result": None})
+            self.save_job(response_copy)
+
+        except Exception as exc:
+            logger.exception("Async analysis job %s encountered failure: %s", job_id, exc)
+            error_envelope = {
+                "code": "PIPELINE_FAILED",
+                "message": f"Pipeline analysis failed: {str(exc)}",
+                "details": {"job_id": job_id},
+            }
+            self.update_job_progress(
+                job_id=job_id,
+                stage="failed",
+                percent=0,
+                message="Analysis failed.",
+                detail=str(exc),
+                error=error_envelope,
+            )
         finally:
             if temp_path.exists():
                 try:
