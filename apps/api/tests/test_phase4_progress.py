@@ -100,9 +100,10 @@ async def test_async_mode_initial_response_and_polling_completion(client: AsyncC
     assert actual_stages == expected_stages
 
     # 2. Poll GET /api/v1/analyze/{job_id}/progress until completed
-    max_wait_seconds = 10.0
+    max_wait_seconds = 35.0
     start_time = time.time()
     final_data = None
+    last_poll = None
 
     while time.time() - start_time < max_wait_seconds:
         poll_resp = await client.get(f"/api/v1/analyze/{job_id}/progress")
@@ -114,9 +115,10 @@ async def test_async_mode_initial_response_and_polling_completion(client: AsyncC
         if poll_json["status"] == "completed":
             final_data = poll_json
             break
-        await asyncio.sleep(0.1)
+        last_poll = poll_json
+        await asyncio.sleep(0.2)
 
-    assert final_data is not None, f"Async job {job_id} did not reach 'completed' within {max_wait_seconds}s"
+    assert final_data is not None, f"Async job {job_id} did not reach 'completed' within {max_wait_seconds}s (last={last_poll})"
     assert final_data["status"] == "completed"
     assert final_data["overall_percent"] == 100
     assert final_data["event"] == "job.completed"

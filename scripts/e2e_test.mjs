@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Arpegia Phase 1, Phase 2 & Phase 3 End-to-End (E2E) Integration & Smoke Test
+ * Arpegia Phase 1, Phase 2, Phase 3 & Phase 4 End-to-End (E2E) Integration & Smoke Test
  *
  * Verifies live communication across services:
  * a. Checks GET /health -> asserts 200 OK.
  * b. Synthesizes a multi-note guitar WAV file and uploads to POST /api/v1/analyze ->
  *    asserts 200 OK, verifies chords, improvisations, chord_diagrams, tablature,
- *    and initial arrangements (with polyphonic voice roles on TabNote).
+ *    initial arrangements, and progress.overall_percent == 100.
  * c. Sends PUT /api/v1/analyze/{job_id}/tablature -> edits a note's fret and technique
  *    ("slide") and verifies updated ascii_tab.
  * d. Sends POST /api/v1/analyze/{job_id}/arrange with
@@ -17,6 +17,10 @@
  *    for both base tablature and the new arrangement_id -> asserts 200 OK and validates
  *    magic bytes (MThd for MIDI, <?xml + <score-partwise for MusicXML, %PDF- for PDF,
  *    and 6-line staff for ASCII) plus Content-Disposition headers.
+ * f. Tests Phase 4 Async Pipeline + HTTP Polling Fallback (POST /api/v1/analyze?async_mode=true
+ *    and GET /api/v1/analyze/{job_id}/progress) verifying all 5 pipeline stages reach completion.
+ * g. Tests Phase 4 WebSocket Real-Time Streaming (WS /ws/analyze/{job_id}) asserting structured
+ *    JobProgressEvent frames with non-decreasing overall_percent reaching 100% with full result.
  */
 
 import { spawn } from "node:child_process";
@@ -176,14 +180,14 @@ async function verifyFourExports(baseUrl, jobId, arrangementId = null) {
  */
 async function runSmokeTest() {
   console.log("\n🎸 ===================================================================");
-  console.log("   Arpegia Phase 1 + 2 + 3 E2E Integration & Smoke Test (Live API)");
+  console.log("   Arpegia Phase 1 + 2 + 3 + 4 E2E Integration & Smoke Test (Live API)");
   console.log("=====================================================================\n");
 
   const startTime = Date.now();
   let serverProcess = null;
 
   // Step A: Healthcheck
-  console.log(`[1/6] Checking API gateway health at ${API_URL}/health ...`);
+  console.log(`[1/8] Checking API gateway health at ${API_URL}/health ...`);
   let isAlive = await checkHealth(API_URL);
 
   if (!isAlive) {
@@ -239,8 +243,8 @@ async function runSmokeTest() {
   console.log(`  ✓ GET /health returned 200 OK (service: "${healthData.service || "arpegia-api"}", status: "${healthData.status}")`);
 
   try {
-    // Step B: Synthesize WAV & POST /api/v1/analyze
-    console.log("\n[2/6] Synthesizing multi-note guitar WAV & running POST /api/v1/analyze ...");
+    // Step B: Synthesize WAV & POST /api/v1/analyze (Sync Backward-Compat)
+    console.log("\n[2/8] Synthesizing multi-note guitar WAV & running POST /api/v1/analyze (Sync Backward-Compat)...");
     const wavBuffer = createSyntheticGuitarArpeggioWav({
       frequencies: [164.81, 196.00, 246.94, 329.63], // E3, G3, B3, E4
       noteDuration: 0.5,
@@ -271,6 +275,18 @@ async function runSmokeTest() {
       throw new Error(`Invalid analysis response: status='${analysis.status}', job_id='${analysis.job_id}'`);
     }
     console.log(`  ✓ Phase 1 Metadata: key="${analysis.metadata?.key}", bpm=${analysis.metadata?.bpm}, duration=${analysis.metadata?.duration}s, chords=${analysis.chords?.length}, improvisations=${analysis.improvisations?.length}`);
+
+    // Verify Phase 4 Progress object on synchronous response
+    if (
+      !analysis.progress ||
+      analysis.progress.status !== "completed" ||
+      analysis.progress.overall_percent !== 100
+    ) {
+      throw new Error(
+        `Synchronous response missing valid completed progress object: ${JSON.stringify(analysis.progress)}`
+      );
+    }
+    console.log(`  ✓ Phase 4 Progress Telemetry: overall_percent=${analysis.progress.overall_percent}%, status="${analysis.progress.status}", steps=${analysis.progress.steps?.length}`);
 
     // Validate chord_diagrams & tablature
     const diagrams = analysis.chord_diagrams;
@@ -304,7 +320,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Phase 3 Default Arrangement: "${defaultArr.title}" (${defaultArr.arrangement_id}) with voices [${Array.from(defaultVoices).join(", ")}]`);
 
     // Step C: Interactive Tab Note Edit (PUT /api/v1/analyze/{job_id}/tablature)
-    console.log("\n[3/6] Testing Interactive Tab Editor (PUT /api/v1/analyze/{job_id}/tablature)...");
+    console.log("\n[3/8] Testing Interactive Tab Editor (PUT /api/v1/analyze/{job_id}/tablature)...");
     const targetNote = m1Notes[0];
     const targetFret = 4;
     const targetTech = "slide";
@@ -344,7 +360,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Note '${targetNote.id}' updated to fret=${targetFret}, technique='${targetTech}' (${updatedTarget.note_name}, MIDI ${updatedTarget.midi}) & ASCII tab regenerated`);
 
     // Step D: Phase 3 On-Demand Style Arrangement (POST /api/v1/analyze/{job_id}/arrange)
-    console.log("\n[4/6] Generating Phase 3 Custom Arrangement (POST /api/v1/analyze/{job_id}/arrange)...");
+    console.log("\n[4/8] Generating Phase 3 Custom Arrangement (POST /api/v1/analyze/{job_id}/arrange)...");
     const arrangeRequest = {
       style: "Neo Soul",
       difficulty: "Advanced",
@@ -380,7 +396,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Generated "${newArrangement.title}" (ID: ${newArrangement.arrangement_id}, Capo: ${newArrangement.tablature.capo}, Chords: [${newArrangement.chords_used.join(", ")}], Voices: [${Array.from(arrVoices).join(", ")}])`);
 
     // Step E: Verify persistence in GET /api/v1/analyze/{job_id}
-    console.log("\n[5/6] Verifying job store persistence via GET /api/v1/analyze/{job_id}...");
+    console.log("\n[5/8] Verifying job store persistence via GET /api/v1/analyze/{job_id}...");
     const getRes = await fetch(`${API_URL}/api/v1/analyze/${analysis.job_id}`);
     if (!getRes.ok) {
       throw new Error(`GET /api/v1/analyze/{job_id} failed with HTTP ${getRes.status}`);
@@ -395,13 +411,169 @@ async function runSmokeTest() {
     console.log(`  ✓ GET /api/v1/analyze/${analysis.job_id} confirmed persisted tab edits and ${retrievedAnalysis.arrangements.length} arrangements`);
 
     // Step F: Verify Multi-Format Export across all 4 formats for both base tablature and new arrangement_id
-    console.log("\n[6/6] Testing Multi-Format Export (GET /api/v1/analyze/{job_id}/export) across MIDI, MusicXML, PDF, and ASCII...");
+    console.log("\n[6/8] Testing Multi-Format Export (GET /api/v1/analyze/{job_id}/export) across MIDI, MusicXML, PDF, and ASCII...");
     await verifyFourExports(API_URL, analysis.job_id, null);
     await verifyFourExports(API_URL, analysis.job_id, newArrangement.arrangement_id);
 
+    // Step G: Phase 4 Async Pipeline + HTTP Polling Fallback
+    console.log("\n[7/8] Testing Phase 4 Async Pipeline + HTTP Polling Fallback (POST /api/v1/analyze?async_mode=true)...");
+    const asyncWav = createSyntheticGuitarArpeggioWav({
+      frequencies: [164.81, 196.00, 246.94, 329.63],
+      noteDuration: 0.5,
+      sampleRate: 22050,
+    });
+    const asyncFormData = new FormData();
+    asyncFormData.append("file", new Blob([asyncWav], { type: "audio/wav" }), "e2e_guitar_async.wav");
+
+    const asyncPostRes = await fetch(`${API_URL}/api/v1/analyze?async_mode=true`, {
+      method: "POST",
+      body: asyncFormData,
+    });
+    if (!asyncPostRes.ok) {
+      throw new Error(`Async analyze initiation failed with HTTP ${asyncPostRes.status}`);
+    }
+    const asyncInit = await asyncPostRes.json();
+    const asyncJobId = asyncInit.job_id;
+    if (!asyncJobId) {
+      throw new Error("Async analyze initiation did not return a job_id");
+    }
+    console.log(`  ✓ Async job dispatched: ${asyncJobId} (initial status="${asyncInit.status}", stage="${asyncInit.current_stage}", percent=${asyncInit.overall_percent}%)`);
+
+    // Poll GET /api/v1/analyze/{job_id}/progress
+    const pollStart = Date.now();
+    const maxPollTimeMs = 45000;
+    let pollCompleted = null;
+    let pollCount = 0;
+
+    while (Date.now() - pollStart < maxPollTimeMs) {
+      await new Promise((r) => setTimeout(r, 600));
+      pollCount++;
+      const pollRes = await fetch(`${API_URL}/api/v1/analyze/${asyncJobId}/progress`);
+      if (!pollRes.ok) {
+        throw new Error(`Polling /progress failed with HTTP ${pollRes.status}`);
+      }
+      const pollData = await pollRes.json();
+      if (pollData.status === "completed") {
+        pollCompleted = pollData;
+        break;
+      }
+      if (pollData.status === "failed") {
+        throw new Error(`Async pipeline job failed during polling: ${pollData.message || JSON.stringify(pollData)}`);
+      }
+    }
+
+    if (!pollCompleted) {
+      throw new Error(`Async job ${asyncJobId} did not reach 'completed' within ${maxPollTimeMs / 1000}s`);
+    }
+
+    console.log(`  ✓ Polling completed in ${((Date.now() - pollStart) / 1000).toFixed(2)}s (${pollCount} polls, overall_percent=${pollCompleted.overall_percent}%)`);
+    if (!Array.isArray(pollCompleted.steps) || pollCompleted.steps.length !== 5) {
+      throw new Error(`Expected 5 pipeline steps, got: ${pollCompleted.steps?.length}`);
+    }
+    for (const step of pollCompleted.steps) {
+      if (step.status !== "completed" && step.status !== "skipped") {
+        throw new Error(`Step '${step.stage}' has invalid terminal status: '${step.status}'`);
+      }
+    }
+    if (!pollCompleted.result || !pollCompleted.result.chords || !pollCompleted.result.tablature || !pollCompleted.result.arrangements) {
+      throw new Error("Polling final payload missing complete Phase 1-3 result");
+    }
+    console.log(`  ✓ All 5 pipeline stages verified (${pollCompleted.steps.map((s) => `${s.stage}:${s.status}`).join(", ")})`);
+    console.log(`  ✓ Result payload contains ${pollCompleted.result.chords.length} chords, ${pollCompleted.result.tablature.measures.length} measures, and ${pollCompleted.result.arrangements.length} arrangements`);
+
+    // Step H: Phase 4 WebSocket Real-Time Progress Streaming
+    console.log("\n[8/8] Testing Phase 4 WebSocket Real-Time Progress Streaming (WS /ws/analyze/{job_id})...");
+    const wsWav = createSyntheticGuitarArpeggioWav({
+      frequencies: [164.81, 196.00, 246.94, 329.63],
+      noteDuration: 0.5,
+      sampleRate: 22050,
+    });
+    const wsFormData = new FormData();
+    wsFormData.append("file", new Blob([wsWav], { type: "audio/wav" }), "e2e_guitar_ws.wav");
+
+    const wsPostRes = await fetch(`${API_URL}/api/v1/analyze?async_mode=true`, {
+      method: "POST",
+      body: wsFormData,
+    });
+    if (!wsPostRes.ok) {
+      throw new Error(`WS test analyze initiation failed with HTTP ${wsPostRes.status}`);
+    }
+    const wsInit = await wsPostRes.json();
+    const wsJobId = wsInit.job_id;
+
+    const wsProtocol = API_URL.startsWith("https") ? "wss:" : "ws:";
+    const wsHost = API_URL.replace(/^https?:\/\//, "");
+    const wsEndpoint = `${wsProtocol}//${wsHost}/ws/analyze/${wsJobId}`;
+    console.log(`  ✓ Connecting to WebSocket endpoint: ${wsEndpoint}`);
+
+    const receivedFrames = [];
+    const wsPromise = new Promise((resolveWs, rejectWs) => {
+      const timeout = setTimeout(() => {
+        try { ws.close(); } catch {}
+        rejectWs(new Error(`WebSocket test timed out waiting for job.completed after 45s (received ${receivedFrames.length} frames)`));
+      }, 45000);
+
+      const ws = new globalThis.WebSocket(wsEndpoint);
+
+      ws.onopen = () => {
+        // Connected
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          receivedFrames.push(payload);
+          if (payload.event === "job.completed" || payload.status === "completed") {
+            clearTimeout(timeout);
+            try { ws.close(); } catch {}
+            resolveWs(receivedFrames);
+          } else if (payload.event === "job.failed" || payload.status === "failed") {
+            clearTimeout(timeout);
+            try { ws.close(); } catch {}
+            rejectWs(new Error(`WebSocket job reported failure: ${payload.error || payload.message}`));
+          }
+        } catch (err) {
+          clearTimeout(timeout);
+          try { ws.close(); } catch {}
+          rejectWs(err);
+        }
+      };
+
+      ws.onerror = (err) => {
+        clearTimeout(timeout);
+        rejectWs(new Error(`WebSocket error encountered: ${err.message || err}`));
+      };
+    });
+
+    const frames = await wsPromise;
+    console.log(`  ✓ Received ${frames.length} WebSocket progress frames`);
+
+    if (frames.length === 0) {
+      throw new Error("No WebSocket progress frames were received");
+    }
+
+    // Verify non-decreasing percentages
+    for (let i = 0; i < frames.length - 1; i++) {
+      const curr = frames[i].overall_percent;
+      const next = frames[i + 1].overall_percent;
+      if (typeof curr === "number" && typeof next === "number" && curr > next) {
+        throw new Error(`Progress percent regressed in frame ${i + 1}: ${curr}% > ${next}%`);
+      }
+    }
+
+    const lastFrame = frames[frames.length - 1];
+    if (lastFrame.event !== "job.completed" || lastFrame.status !== "completed" || lastFrame.overall_percent !== 100) {
+      throw new Error(`Final frame is not completed at 100%: ${JSON.stringify(lastFrame)}`);
+    }
+    if (!lastFrame.result || !lastFrame.result.chords || !lastFrame.result.tablature || !lastFrame.result.arrangements) {
+      throw new Error("Final WebSocket frame missing full AnalysisResponse result payload");
+    }
+    console.log(`  ✓ Non-decreasing telemetry sequence: [${frames.map((f) => `${f.overall_percent}%`).join(" -> ")}]`);
+    console.log(`  ✓ Final WebSocket frame verified: event="${lastFrame.event}", status="${lastFrame.status}", overall_percent=${lastFrame.overall_percent}% with full AnalysisResponse (chords=${lastFrame.result.chords.length}, measures=${lastFrame.result.tablature.measures.length}, arrangements=${lastFrame.result.arrangements.length})`);
+
     const durationSeconds = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log("\n=====================================================================");
-    console.log(`🎉 ALL PHASE 1, 2 & 3 E2E SMOKE TESTS PASSED SUCCESSFULLY (${durationSeconds}s)`);
+    console.log(`🎉 ALL PHASE 1, 2, 3 & 4 E2E SMOKE TESTS PASSED SUCCESSFULLY (${durationSeconds}s)`);
     console.log("=====================================================================\n");
   } finally {
     if (serverProcess) {

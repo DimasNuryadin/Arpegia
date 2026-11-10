@@ -1,12 +1,12 @@
 # Arpegia — AI-Powered Guitar Intelligence Platform
 
-> **Audio Analysis • Chord & Key Intelligence • Biomechanical Guitar Tablature • Interactive Fretboard & Web Audio Synth • AI Fingerstyle & Style Arrangement Studio • Multi-Format Score Export (MIDI, MusicXML, PDF, ASCII)**
+> **Audio Analysis • Real-Time Async Pipeline Progress Streaming (WebSocket + HTTP Polling) • Chord & Key Intelligence • Biomechanical Guitar Tablature • Interactive Fretboard & Web Audio Synth • AI Fingerstyle & Style Arrangement Studio • Multi-Format Score Export (MIDI, MusicXML, PDF, ASCII)**
 
 ---
 
 ## Overview
 
-**Arpegia** is an end-to-end AI music intelligence platform engineered for guitarists, producers, and educators. It ingests raw audio tracks (`.mp3` or `.wav`), executes digital signal processing (DSP) and LangGraph multi-agent orchestration to extract musical key, tempo, chord progressions, and fundamental pitches, maps notes onto a biomechanically playable 6-string guitar fretboard, synthesizes polyphonic style arrangements (**Fingerstyle**, **Neo Soul**, **Jazz Chord Melody**, **Acoustic Strumming**), and exports publication-ready scores across **MIDI**, **MusicXML 4.0**, **PDF**, and **ASCII Tab**.
+**Arpegia** is an end-to-end AI music intelligence platform engineered for guitarists, producers, and educators. It ingests raw audio tracks (`.mp3` or `.wav`), streams live pipeline telemetry across 5 execution stages (**Separating Stems** -> **Detecting Key & Tempo** -> **Recognizing Chords** -> **Transcribing Guitar Tab** -> **Generating Fingerstyle Arrangement**) via dual-transport **WebSocket** and **HTTP Polling**, executes digital signal processing (DSP) and LangGraph multi-agent orchestration to extract musical key, tempo, chord progressions, and fundamental pitches, maps notes onto a biomechanically playable 6-string guitar fretboard via Viterbi trellis dynamic programming, synthesizes polyphonic style arrangements (**Fingerstyle**, **Neo Soul**, **Jazz Chord Melody**, **Acoustic Strumming**), and exports publication-ready scores across **MIDI**, **MusicXML 4.0**, **PDF**, and **ASCII Tab**.
 
 ---
 
@@ -18,6 +18,7 @@
 flowchart LR
     subgraph Web["apps/web (Next.js 16 • Port 3000)"]
         UI["Studio UI & Chord Timeline"]
+        Stepper["5-Stage Pipeline Stepper UI"]
         Studio["AI Arrangement Studio"]
         Editor["Interactive Tab Editor"]
         Synth["Web Audio Polyphonic Synth"]
@@ -26,24 +27,27 @@ flowchart LR
 
     subgraph API["apps/api (FastAPI • Port 8000)"]
         Router["REST v1 Gateway (/api/v1/analyze)"]
+        WS["WebSocket Gateway (/ws/analyze/{id})"]
         AnalyzerSvc["AnalyzerService & Job Store"]
         ExportSvc["ExportService"]
     end
 
-    subgraph Engine["services/audio-engine (LangGraph + Librosa DSP)"]
+    subgraph Engine["services/audio-engine (LangGraph + Demucs + Basic Pitch + Librosa DSP)"]
         Graph["8-Node StateGraph Orchestrator"]
         ArrGen["ArrangementGenerator"]
         Exporters["Symbolic Exporters (MIDI / MusicXML / PDF / ASCII)"]
     end
 
-    UI -->|"POST /api/v1/analyze"| Router
+    UI -->|"POST /api/v1/analyze?async_mode=true"| Router
+    Stepper -->|"WS /ws/analyze/{id} (fallback GET .../progress)"| WS
     Editor -->|"PUT /api/v1/analyze/{id}/tablature"| Router
     Studio -->|"POST /api/v1/analyze/{id}/arrange"| Router
     ExportBar -->|"GET /api/v1/analyze/{id}/export"| Router
 
     Router --> AnalyzerSvc
+    WS --> AnalyzerSvc
     Router --> ExportSvc
-    AnalyzerSvc --> Graph
+    AnalyzerSvc -->|"progress_callback(stage, %, msg)"| Graph
     AnalyzerSvc --> ArrGen
     ExportSvc --> Exporters
 ```
@@ -115,20 +119,35 @@ arpegia/
   - **Printable PDF Score (`.pdf`):** Pure-Python `%PDF-1.4` score generator with song metadata, chord progression, and monospace Courier tablature systems.
   - **Formatted ASCII Tab Sheet (`.txt`):** Clean text sheet with metadata header, chord sequence, and 6-line guitar staff.
 
+### Phase 4: Real-Time Async Pipeline Streaming & Telemetry (WebSocket + HTTP Polling Fallback)
+- **Dual-Transport Streaming Client (`apps/web`):**
+  - **WebSocket Primary Transport (`WS /ws/analyze/{job_id}`):** Subscribes to real-time `JobProgressEvent` frames streamed at millisecond latency as each LangGraph node finishes.
+  - **HTTP Polling Automatic Fallback (`GET /api/v1/analyze/{job_id}/progress`):** Transparently engages if WebSocket encounters connection drops or firewall restrictions, polling at configurable intervals (`ARPEGIA_ASYNC_POLL_INTERVAL_MS=800`).
+  - **Thread-to-Async Event Loop Bridging:** Background DSP execution (`asyncio.to_thread`) uses thread-safe scheduling (`loop.call_soon_threadsafe(queue.put_nowait, event)`) to publish live telemetry without blocking FastAPI's async event loop.
+- **5-Stage Interactive Pipeline Stepper UI:**
+  1. `separating_stems` (**0% -> 25%**): Demucs 4-stem neural source separation isolating guitar, bass, drums, and vocal stems.
+  2. `detecting_key_tempo` (**25% -> 40%**): Beat grid tracking (BPM) and Krumhansl-Schmuckler chromagram key signature detection.
+  3. `detecting_chords` (**40% -> 60%**): Harmonic chroma segmentation, chord template matching, voicings, and genre-specific improvisations.
+  4. `transcribing_tablature` (**60% -> 85%**): Polyphonic note tracking via Basic Pitch neural network paired with Viterbi dynamic programming trellis decoding for biomechanical fretboard optimization.
+  5. `generating_arrangement` (**85% -> 100%**): Polyphonic Fingerstyle voice separation (thumb bass + arpeggio harmony + melody) and Pydantic v2 schema lock validation.
+- **Seamless Studio View Handoff:** Once the pipeline reaches `100%` and emits `job.completed`, the stepper smoothly transitions directly to the interactive Studio workbench with the full `AnalysisResponse`.
+
 ---
 
 ## Canonical Port Registry & REST API Summary
 
-| Service | Workspace Path | Port | Base URL / Health Check |
+| Service | Workspace Path | Port | Base URL / Protocols |
 | :--- | :--- | :--- | :--- |
 | **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
-| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000/health` |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`ws://localhost:8000/ws/analyze/{job_id}` |
 | **Audio Engine (DSP & LangGraph)** | `services/audio-engine/` | In-process / Worker | Invoked by `apps/api` |
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/health` | Service health check (`200 OK`) |
-| `POST` | `/api/v1/analyze` | Upload `.mp3`/`.wav` and run full Phase 1–3 pipeline |
+| `POST` | `/api/v1/analyze` | Upload `.mp3`/`.wav`. Default `async_mode=false` (sync); `async_mode=true` (async background job) |
+| `GET` | `/api/v1/analyze/{job_id}/progress` | Poll real-time 5-stage pipeline progress and steps |
+| `WS` | `/ws/analyze/{job_id}` | Stream real-time `JobProgressEvent` frames until `job.completed` |
 | `GET` | `/api/v1/analyze/{job_id}` | Retrieve stored analysis job, tablature, and arrangements |
 | `PUT` | `/api/v1/analyze/{job_id}/tablature` | Update note string/fret/technique and regenerate `ascii_tab` |
 | `POST` | `/api/v1/analyze/{job_id}/arrange` | Synthesize and persist a new `ArrangementVariation` |
@@ -185,19 +204,22 @@ npm run dev
 ## Automated Testing & Verification
 
 ### 1. Full Pytest Suite (`services/audio-engine/tests` & `apps/api/tests`)
-Runs unit, contract, and end-to-end tests across the DSP pipeline, arrangement generator, symbolic exporters, and FastAPI endpoints:
+Runs unit, contract, and end-to-end tests across the DSP pipeline, ML stem separation & Basic Pitch polyphonic transcription, Viterbi fretboard solver, arrangement generator, symbolic exporters, and FastAPI REST/WebSocket endpoints:
 
 ```bash
 pytest
 ```
 
 ### 2. Automated Cross-Platform Full-Stack E2E Smoke Test (`scripts/e2e_test.mjs`)
-Verifies the complete Phase 1 + Phase 2 + Phase 3 flow against a live server (automatically spawns `uvicorn` if not already running):
+Verifies the complete Phase 1 + 2 + 3 + 4 flow against a live server (automatically spawns `uvicorn` if not already running):
 1. `GET /health` -> asserts `200 OK`.
-2. `POST /api/v1/analyze` with a synthesized multi-note guitar WAV file -> validates `chords`, `improvisations`, `chord_diagrams`, `tablature`, and initial `arrangements` with polyphonic `voice` roles.
+2. `POST /api/v1/analyze` (Synchronous Backward-Compatibility Check) with a synthesized multi-note guitar WAV file -> validates `chords`, `improvisations`, `chord_diagrams`, `tablature`, initial `arrangements` with polyphonic `voice` roles, and completed `progress.overall_percent == 100`.
 3. `PUT /api/v1/analyze/{job_id}/tablature` -> edits a note's `fret` and `technique` (`slide`) and verifies regenerated `ascii_tab`.
 4. `POST /api/v1/analyze/{job_id}/arrange` (`Neo Soul`, `Advanced`, `capo: 2`, `tempo_scale: 0.9`) -> verifies new `arrangement_id` generation and persistence in `GET /api/v1/analyze/{job_id}`.
-5. `GET /api/v1/analyze/{job_id}/export` across all 4 formats (`midi`, `musicxml`, `pdf`, `ascii`) for both base tablature and the custom `arrangement_id` -> validates magic bytes (`MThd`, `<?xml` + `<score-partwise`, `%PDF-`, and 6-line ASCII staff).
+5. `GET /api/v1/analyze/{job_id}` -> asserts persistence of edits and arrangements in the job store.
+6. `GET /api/v1/analyze/{job_id}/export` across all 4 formats (`midi`, `musicxml`, `pdf`, `ascii`) for both base tablature and the custom `arrangement_id` -> validates magic bytes (`MThd`, `<?xml` + `<score-partwise`, `%PDF-`, and 6-line ASCII staff).
+7. `POST /api/v1/analyze?async_mode=true` & `GET /api/v1/analyze/{job_id}/progress` (Async + HTTP Polling Flow) -> polls until completion and asserts all 5 pipeline stages reached `completed`/`skipped` with full `AnalysisResponse` result.
+8. `WS /ws/analyze/{job_id}` (WebSocket Real-Time Progress Streaming) -> connects to WebSocket endpoint, verifies non-decreasing `JobProgressEvent` frames `[10% -> 25% -> 30% -> ... -> 99% -> 100%]`, and asserts terminal `job.completed` frame delivers full `AnalysisResponse`.
 
 ```bash
 node scripts/e2e_test.mjs
