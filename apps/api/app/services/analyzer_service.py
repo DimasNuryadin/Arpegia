@@ -716,12 +716,20 @@ class AnalyzerService:
         with self._lock:
             event = self._progress_registry.get(job_id)
             if event:
-                return event.model_copy(deep=True)
+                copy = event.model_copy(deep=True)
+                if (copy.status == "completed" or copy.event == "job.completed") and copy.result is None:
+                    job = self.get_job(job_id)
+                    if job:
+                        copy.result = job
+                return copy
 
         # Fallback check in stored jobs
         job = self.get_job(job_id)
         if job and job.progress:
-            return job.progress.model_copy(deep=True)
+            copy = job.progress.model_copy(deep=True)
+            if copy.result is None:
+                copy.result = job
+            return copy
         elif job:
             now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             steps = [
@@ -783,10 +791,18 @@ class AnalyzerService:
         with self._lock:
             subscribers = list(self._job_subscribers.get(job_id, []))
 
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+                self._loop = loop
+            except RuntimeError:
+                pass
+
         for queue in subscribers:
             try:
-                if self._loop and self._loop.is_running():
-                    self._loop.call_soon_threadsafe(queue.put_nowait, event)
+                if loop and loop.is_running():
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
                 else:
                     queue.put_nowait(event)
             except Exception as exc:
@@ -836,6 +852,8 @@ class AnalyzerService:
                     step.progress_percent = 100
                 if result is not None:
                     event.result = result
+                elif job_id in self._jobs:
+                    event.result = self._jobs[job_id]
             elif stage == "failed":
                 event.event = "job.failed"
                 event.status = "failed"
@@ -1089,6 +1107,7 @@ class AnalyzerService:
                     file_path=str(file_path),
                     styles=["Neo Soul", "Jazz", "Pop", "Fingerstyle"],
                     filename=original_filename,
+                    progress_callback=progress_callback,
                 )
 
             if not pipeline_output:
@@ -1217,14 +1236,92 @@ class AnalyzerService:
         job_id = str(uuid.uuid4())
         original_filename = file.filename or "audio.mp3"
 
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        initial_steps = create_initial_pipeline_steps()
+
+        initial_event = JobProgressEvent(
+            event="job.progress",
+            job_id=job_id,
+            status="processing",
+            current_stage="separating_stems",
+            overall_percent=5,
+            message="Separating audio stems...",
+            steps=initial_steps,
+            updated_at=now_iso,
+            result=None,
+            error=None,
+        )
+
+        with self._lock:
+            self._progress_registry[job_id] = initial_event
+
         temp_path, _ = await self.save_temp_upload(file)
 
+        callback_called_stages: Set[str] = set()
+
+        def progress_callback(
+            stage: str, percent: int, message: str, detail: Optional[str] = None
+        ) -> None:
+            callback_called_stages.add(stage)
+            if stage == "completed":
+                self.update_job_progress(
+                    job_id,
+                    "generating_arrangement",
+                    99,
+                    "Finalizing analysis result...",
+                    detail or "Compiling response",
+                )
+                return
+            self.update_job_progress(job_id, stage, percent, message, detail)
+
         try:
+            progress_callback(
+                "separating_stems",
+                10,
+                "Separating audio stems...",
+                "Isolating guitar and bass tracks...",
+            )
+
             duration = self.extract_audio_duration(temp_path, original_filename)
 
             engine_result = await anyio.to_thread.run_sync(
-                self._run_audio_engine, temp_path, original_filename
+                self._run_audio_engine, temp_path, original_filename, progress_callback
             )
+
+            # Advance missing stages if audio-engine didn't emit all intermediate milestones
+            if "detecting_key_tempo" not in callback_called_stages:
+                progress_callback(
+                    "separating_stems", 25, "Separating audio stems finished.", "Stem separation finished"
+                )
+                progress_callback(
+                    "detecting_key_tempo", 35, "Detecting musical key and tempo...", "Analyzing key & tempo"
+                )
+            if "detecting_chords" not in callback_called_stages:
+                progress_callback(
+                    "detecting_key_tempo", 40, "Key & tempo detection completed.", "Key & tempo detected"
+                )
+                progress_callback(
+                    "detecting_chords", 55, "Recognizing chords and improvisations...", "Chroma harmonic analysis"
+                )
+            if "transcribing_tablature" not in callback_called_stages:
+                progress_callback(
+                    "detecting_chords", 60, "Chord recognition completed.", "Chords detected"
+                )
+                progress_callback(
+                    "transcribing_tablature", 75, "Transcribing guitar tablature...", "Viterbi fretboard optimization"
+                )
+            if "generating_arrangement" not in callback_called_stages:
+                progress_callback(
+                    "transcribing_tablature", 85, "Tablature transcription completed.", "Tablature generated"
+                )
+                progress_callback(
+                    "generating_arrangement", 95, "Generating fingerstyle arrangement...", "Synthesizing arrangement"
+                )
 
             if engine_result is not None:
                 (
@@ -1245,30 +1342,6 @@ class AnalyzerService:
                     arrangements,
                 ) = self.generate_fallback_analysis(original_filename, duration)
 
-            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            completed_steps = [
-                PipelineStepInfo(
-                    stage=s,
-                    label=l,
-                    status="completed",
-                    progress_percent=100,
-                    detail=f"{l} finished",
-                )
-                for s, l in ORDERED_PIPELINE_STAGES
-            ]
-            completed_progress = JobProgressEvent(
-                event="job.completed",
-                job_id=job_id,
-                status="completed",
-                current_stage="completed",
-                overall_percent=100,
-                message="Analysis completed successfully!",
-                steps=completed_steps,
-                updated_at=now_iso,
-                result=None,
-                error=None,
-            )
-
             response = AnalysisResponse(
                 job_id=job_id,
                 status="completed",
@@ -1278,13 +1351,24 @@ class AnalyzerService:
                 chord_diagrams=chord_diagrams,
                 tablature=tablature,
                 arrangements=arrangements,
-                progress=completed_progress,
+                progress=None,
             )
 
             self.save_job(response)
-            with self._lock:
-                self._progress_registry[job_id] = completed_progress
-            return response
+
+            completed_event = self.update_job_progress(
+                job_id=job_id,
+                stage="completed",
+                percent=100,
+                message="Analysis completed successfully!",
+                detail="Pipeline completed successfully",
+                result=response,
+            )
+
+            response_copy = response.model_copy()
+            response_copy.progress = completed_event.model_copy(update={"result": None})
+            self.save_job(response_copy)
+            return response_copy
 
         finally:
             if temp_path.exists():
@@ -1343,6 +1427,15 @@ class AnalyzerService:
             stage: str, percent: int, message: str, detail: Optional[str] = None
         ) -> None:
             callback_called_stages.add(stage)
+            if stage == "completed":
+                self.update_job_progress(
+                    job_id,
+                    "generating_arrangement",
+                    99,
+                    "Finalizing analysis result...",
+                    detail or "Compiling response",
+                )
+                return
             self.update_job_progress(job_id, stage, percent, message, detail)
 
         try:

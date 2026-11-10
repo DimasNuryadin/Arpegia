@@ -1,7 +1,7 @@
 # Audio Processing & Signal Analysis
 librosa>=0.10.2
 soundfile>=0.12.1
-numpy>=1.26.0
+numpy>=1.26.0,<2.0.0
 scipy>=1.13.0
 
 # AI Orchestration & Music Intelligence

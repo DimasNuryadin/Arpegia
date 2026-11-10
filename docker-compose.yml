@@ -6,11 +6,15 @@ services:
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1/analyze
         NEXT_PUBLIC_USE_MOCK: "false"
+        NEXT_PUBLIC_WS_URL: ws://localhost:8000
+        ARPEGIA_ASYNC_POLL_INTERVAL_MS: "800"
     ports:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1/analyze
       - NEXT_PUBLIC_USE_MOCK=false
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+      - ARPEGIA_ASYNC_POLL_INTERVAL_MS=800
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
       interval: 15s
