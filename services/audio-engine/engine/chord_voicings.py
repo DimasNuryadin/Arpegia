@@ -232,6 +232,20 @@ class ChordVoicingGenerator:
             frets = [-1, fret_5, fret_5 + 2, fret_5 + 2, fret_5 + 3, fret_5]
             fingers = [0, 1, 2, 3, 4, 1]
             base_fret = max(1, fret_5)
+        elif "sus2" in q:
+            frets = [-1, fret_5, fret_5 + 2, fret_5 + 2, fret_5, fret_5]
+            fingers = [0, 1, 3, 4, 1, 1]
+            base_fret = max(1, fret_5)
+        elif "dim" in q:
+            f_d = max(1, fret_5)
+            frets = [-1, f_d, f_d + 1, max(0, f_d - 1), f_d + 1, -1]
+            fingers = [0, 2, 3, 1, 4, 0]
+            base_fret = max(1, f_d - 1 if f_d > 1 else 1)
+        elif "aug" in q:
+            f_a = max(1, fret_5)
+            frets = [-1, f_a, f_a + 2, f_a + 1, f_a + 1, -1]
+            fingers = [0, 1, 4, 2, 3, 0]
+            base_fret = max(1, f_a)
         else:
             # Major
             if fret_6 <= fret_5 and fret_6 <= 10:
