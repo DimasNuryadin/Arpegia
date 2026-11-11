@@ -1,9 +1,13 @@
 "use client";
 
 import React from "react";
-import { Sparkles, Radio, Music2, Cpu, Sun, Moon } from "lucide-react";
+import { Sparkles, Radio, Music2, Cpu, Sun, Moon, Mic, FileAudio } from "lucide-react";
+
+export type TopLevelStudioMode = "upload_analysis" | "live_mic";
 
 interface NavbarProps {
+  currentMode: TopLevelStudioMode;
+  onSelectMode: (mode: TopLevelStudioMode) => void;
   mockMode: boolean;
   onToggleMockMode: (val: boolean) => void;
   onLoadPreset: (presetKey: string) => void;
@@ -13,6 +17,8 @@ interface NavbarProps {
 }
 
 export function Navbar({
+  currentMode,
+  onSelectMode,
   mockMode,
   onToggleMockMode,
   onLoadPreset,
@@ -21,7 +27,7 @@ export function Navbar({
   onToggleTheme,
 }: NavbarProps) {
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-slate-800/80 bg-[#090b10]/90 backdrop-blur-md transition-colors">
+    <header className="sticky top-0 z-50 w-full border-b border-slate-800/80 bg-[#090b10]/95 backdrop-blur-md transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Brand */}
         <div className="flex items-center gap-3">
@@ -35,44 +41,68 @@ export function Navbar({
                 ARPEGIA
               </span>
               <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                Phase 4 Real-Time AI Pipeline
+                Phase 5 Live Mic Studio
               </span>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">
-              WebSocket Stream • HTTP Polling Fallback • 5-Stage Guitar Intelligence
+              60fps Edge DSP Guitar Tuner • Real-Time Mic Chord Detector
             </p>
           </div>
         </div>
 
+        {/* Top-Level Mode Switcher (Zero Cognitive Overload) */}
+        <div className="flex items-center bg-slate-900/90 border border-slate-800 rounded-2xl p-1 shadow-inner">
+          <button
+            type="button"
+            onClick={() => onSelectMode("upload_analysis")}
+            className={`flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer ${
+              currentMode === "upload_analysis"
+                ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <FileAudio className="w-3.5 h-3.5" />
+            <span>🎵 Studio Analysis <span className="hidden md:inline">(Upload Audio)</span></span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSelectMode("live_mic")}
+            className={`flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer ${
+              currentMode === "live_mic"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Mic className="w-3.5 h-3.5" />
+            <span>🎙️ Live Mic Studio <span className="hidden md:inline">(Tuner & Chord Jam)</span></span>
+          </button>
+        </div>
+
         {/* Center / Right controls */}
         <div className="flex items-center gap-2.5">
-          {/* Quick Preset Selector */}
-          <div className="hidden md:flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
-            <span className="text-xs text-slate-400 px-2 flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Presets:
-            </span>
-            <button
-              onClick={() => onLoadPreset("neo-soul-g")}
-              disabled={isProcessing}
-              className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-300 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Neo Soul (G)
-            </button>
-            <button
-              onClick={() => onLoadPreset("acoustic-c")}
-              disabled={isProcessing}
-              className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-300 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Acoustic (C)
-            </button>
-            <button
-              onClick={() => onLoadPreset("jazz-ii-v-i")}
-              disabled={isProcessing}
-              className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-300 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Jazz Standard
-            </button>
-          </div>
+          {/* Quick Preset Selector only visible in Upload Studio Mode */}
+          {currentMode === "upload_analysis" && (
+            <div className="hidden lg:flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
+              <span className="text-xs text-slate-400 px-2 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Presets:
+              </span>
+              <button
+                onClick={() => onLoadPreset("neo-soul-g")}
+                disabled={isProcessing}
+                className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-300 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Neo Soul (G)
+              </button>
+              <button
+                onClick={() => onLoadPreset("acoustic-c")}
+                disabled={isProcessing}
+                className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-300 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Acoustic (C)
+              </button>
+            </div>
+          )}
 
           {/* Demo / Mock Mode Toggle */}
           <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5">
@@ -117,12 +147,12 @@ export function Navbar({
               {theme === "dark" ? (
                 <>
                   <Sun className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden lg:inline">Light</span>
+                  <span className="hidden xl:inline">Light</span>
                 </>
               ) : (
                 <>
                   <Moon className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="hidden lg:inline">Dark</span>
+                  <span className="hidden xl:inline">Dark</span>
                 </>
               )}
             </button>
@@ -131,10 +161,11 @@ export function Navbar({
           {/* Engine Status indicator */}
           <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/60 border border-slate-800/80 text-[11px] text-slate-400">
             <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-            <span>Studio Ready</span>
+            <span>Phase 5 Ready</span>
           </div>
         </div>
       </div>
     </header>
   );
 }
+
