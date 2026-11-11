@@ -11,7 +11,12 @@ import {
   TablatureData,
   TablatureUpdateRequest,
   TransportType,
+  TuningPreset,
+  LiveChordFrameRequest,
+  LiveChordDetectionResult,
 } from "../types";
+import { CANONICAL_TUNING_PRESETS } from "./tuner-dsp";
+import { matchChromaToChord } from "./chord-dsp";
 import {
   buildMockArrangementVariation,
   DEFAULT_FINGERSTYLE_ARRANGEMENT,
@@ -983,6 +988,50 @@ export class ArpegiaApiClient {
         filename: file.name || "uploaded_audio.mp3",
       },
     });
+  }
+
+  /**
+   * Phase 5: Retrieve all 5 guitar tuning presets with exact physical target frequencies
+   * (GET /api/v1/tuner/presets) with built-in canonical offline fallback.
+   */
+  async getTuningPresets(referenceA4Hz = 440.0): Promise<TuningPreset[]> {
+    try {
+      const url = `${this.httpBaseUrl}/api/v1/tuner/presets?reference_a4_hz=${referenceA4Hz}`;
+      const res = await fetch(url, { method: "GET" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data as TuningPreset[];
+        }
+      }
+    } catch {
+      // Backend unavailable; graceful fallback
+    }
+    return CANONICAL_TUNING_PRESETS;
+  }
+
+  /**
+   * Phase 5: Stateless single frame real-time chord detection (POST /api/v1/live/detect-chord)
+   * with automatic client-side chroma template matching fallback.
+   */
+  async detectLiveChord(
+    frame: LiveChordFrameRequest
+  ): Promise<LiveChordDetectionResult> {
+    try {
+      const url = `${this.httpBaseUrl}/api/v1/live/detect-chord`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(frame),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data as LiveChordDetectionResult;
+      }
+    } catch {
+      // Network/server offline; client template matching fallback
+    }
+    return matchChromaToChord(frame.chroma || []);
   }
 }
 

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { Navbar } from "../components/Navbar";
+import { Navbar, TopLevelStudioMode } from "../components/Navbar";
+import { LiveMicStudio } from "../components/LiveMicStudio";
 import { AudioUpload } from "../components/AudioUpload";
 import { MetadataCard } from "../components/MetadataCard";
 import { AudioPlayerTimeline } from "../components/AudioPlayerTimeline";
@@ -26,6 +27,7 @@ import { Sparkles } from "lucide-react";
 
 export default function Home() {
   // Application State (Supports NEXT_PUBLIC_USE_MOCK=true or UI toggle; defaults to Live API http://localhost:8000/api/v1/analyze)
+  const [studioMode, setStudioMode] = useState<TopLevelStudioMode>("upload_analysis");
   const [mockMode, setMockMode] = useState<boolean>(
     process.env.NEXT_PUBLIC_USE_MOCK === "true"
   );
@@ -343,6 +345,8 @@ export default function Home() {
     >
       {/* Studio Header */}
       <Navbar
+        currentMode={studioMode}
+        onSelectMode={(mode) => setStudioMode(mode)}
         mockMode={mockMode}
         onToggleMockMode={(val) => {
           setMockMode(val);
@@ -378,8 +382,10 @@ export default function Home() {
           </div>
         )}
 
-        {/* Phase 4: Real-Time Multi-Stage AI Pipeline Progress Tracker or Studio Workspace */}
-        {uploadState.isUploading ? (
+        {/* Top-Level Mode: Live Mic Studio vs Studio Analysis */}
+        {studioMode === "live_mic" ? (
+          <LiveMicStudio mockMode={mockMode} />
+        ) : uploadState.isUploading ? (
           <section
             aria-label="Real-Time AI Pipeline Progress Stepper"
             className="animate-in fade-in duration-300 space-y-4"
@@ -543,10 +549,10 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-500">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Arpegia Platform • Phase 4 Real-Time AI Pipeline</span>
+            <span>Arpegia Platform • Phase 5 Live Mic Studio & Studio Analysis</span>
             <span className="text-slate-700">|</span>
             <span>
-              WebSocket Stream • HTTP Polling Fallback • 5-Stage Guitar Intelligence
+              60fps Edge Autocorrelation Tuner • WS Live Chord Jam • 5-Stage Neural Pipeline
             </span>
           </div>
 
@@ -554,13 +560,13 @@ export default function Home() {
             <span>
               API Target:{" "}
               <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
-                {api.getApiUrl()}
+                {api.getHttpBaseUrl()}
               </code>
             </span>
             <span>
               WS Target:{" "}
               <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
-                {api.getWsBaseUrl()}
+                {api.getWsBaseUrl()}/ws/live-chord
               </code>
             </span>
           </div>
