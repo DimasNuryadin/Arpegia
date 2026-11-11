@@ -23,6 +23,14 @@ from .orchestrator import (
     generate_custom_arrangement,
     export_job_score,
 )
+from .live_detector import (
+    get_tuning_presets,
+    evaluate_tuner_pitch,
+    evaluate_tuner_pitch_from_pcm,
+    detect_live_chord_from_frame,
+    LiveChordDetector,
+    CANONICAL_TUNING_PRESETS,
+)
 
 __all__ = [
     "AudioProcessor",
@@ -45,4 +53,10 @@ __all__ = [
     "run_pipeline",
     "generate_custom_arrangement",
     "export_job_score",
+    "get_tuning_presets",
+    "evaluate_tuner_pitch",
+    "evaluate_tuner_pitch_from_pcm",
+    "detect_live_chord_from_frame",
+    "LiveChordDetector",
+    "CANONICAL_TUNING_PRESETS",
 ]
