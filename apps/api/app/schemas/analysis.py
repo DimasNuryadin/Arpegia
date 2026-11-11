@@ -618,3 +618,156 @@ class ErrorEnvelope(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     error: ErrorDetail = Field(..., description="Structured error information")
+
+
+# ============================================================================
+# Phase 5 Live Microphone Guitar Tuner & Real-Time Mic Chord Detector Models
+# ============================================================================
+
+
+TuningPresetId = Literal["standard", "drop_d", "half_step_down", "open_g", "dadgad"]
+TuningStatus = Literal["flat", "in_tune", "sharp"]
+
+
+class TuningStringTarget(BaseModel):
+    """Target tuning frequency and MIDI pitch for an individual guitar string."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    string: int = Field(
+        ...,
+        ge=1,
+        le=6,
+        description="Guitar string number (1 to 6, where 1 = High E and 6 = Low E)",
+    )
+    note: str = Field(..., description="Target note name with octave (e.g. 'E2', 'A2', 'E4')")
+    frequency_hz: float = Field(
+        ..., gt=0.0, description="Exact target frequency in Hertz (e.g. 82.41, 110.00)"
+    )
+    midi: int = Field(..., ge=0, le=127, description="Target MIDI note number (e.g. 40, 45, 64)")
+
+
+class TuningPreset(BaseModel):
+    """Complete 6-string guitar tuning preset specification."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: TuningPresetId = Field(..., description="Canonical tuning preset identifier")
+    name: str = Field(
+        ..., description="Human-readable tuning preset name (e.g. 'Standard (E A D G B E)')"
+    )
+    description: str = Field(..., description="Musical description and context for this tuning")
+    reference_a4_hz: float = Field(
+        default=440.0, gt=0.0, description="Reference concert pitch frequency in Hz (default 440.0)"
+    )
+    strings: List[TuningStringTarget] = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        description="List of 6 string tuning targets ordered from string 6 (Low) to string 1 (High)",
+    )
+
+    @field_validator("strings")
+    @classmethod
+    def validate_strings(cls, v: List[TuningStringTarget]) -> List[TuningStringTarget]:
+        if len(v) != 6:
+            raise ValueError(
+                "strings must contain exactly 6 string targets (String 6 Low to String 1 High)"
+            )
+        return v
+
+
+class TunerPitchResult(BaseModel):
+    """Evaluation result comparing a detected microphone pitch against guitar tuning targets."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    detected_frequency_hz: float = Field(
+        ..., ge=0.0, description="Detected pitch frequency in Hertz"
+    )
+    detected_note: str = Field(..., description="Identified note name (e.g. 'E2')")
+    closest_string: int = Field(
+        ...,
+        ge=1,
+        le=6,
+        description="Closest matched guitar string (1 to 6, where 1 = High E, 6 = Low E)",
+    )
+    target_note: str = Field(..., description="Target note name for the closest string")
+    target_frequency_hz: float = Field(
+        ..., gt=0.0, description="Target frequency in Hertz for the string"
+    )
+    cents_deviation: float = Field(
+        ...,
+        ge=-50.0,
+        le=50.0,
+        description="Deviation from target pitch in cents (-50.0 to +50.0, where 0.0 is perfectly in tune)",
+    )
+    tuning_status: TuningStatus = Field(
+        ...,
+        description="Tuning status: 'in_tune' when abs(cents_deviation) <= 3.5, else 'flat' or 'sharp'",
+    )
+    confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Pitch detection confidence score (0.0 to 1.0)"
+    )
+
+
+class LiveChordFrameRequest(BaseModel):
+    """Live microphone audio or chromagram frame sent for real-time chord detection."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    chroma: Optional[List[float]] = Field(
+        default=None,
+        description="12-element pitch class energy vector [C, C#, D, D#, E, F, F#, G, G#, A, A#, B]",
+    )
+    pcm_samples: Optional[List[float]] = Field(
+        default=None,
+        description="Optional downsampled mono audio PCM buffer",
+    )
+    sample_rate: int = Field(
+        default=22050,
+        ge=8000,
+        le=96000,
+        description="Audio sample rate in Hertz (default 22050)",
+    )
+    tuning_preset: TuningPresetId = Field(
+        default="standard",
+        description="Guitar tuning preset identifier (default 'standard')",
+    )
+
+    @field_validator("chroma")
+    @classmethod
+    def validate_chroma(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+        if v is not None:
+            if len(v) != 12:
+                raise ValueError("chroma must contain exactly 12 values")
+        return v
+
+
+class LiveChordDetectionResult(BaseModel):
+    """Real-time microphone chord detection result with SVG chord voicing diagram."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    chord: str = Field(
+        ...,
+        description="Detected chord symbol (e.g. 'Cmaj7', 'Am', 'G7', or 'N' when silence/unrecognized)",
+    )
+    root: str = Field(..., description="Chord root note (e.g. 'C', 'A', 'G')")
+    quality: str = Field(..., description="Chord harmonic quality (e.g. 'maj7', 'minor', 'dom7')")
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="Chord recognition confidence score (0.0 to 1.0)"
+    )
+    voicing: Optional[ChordDiagram] = Field(
+        default=None,
+        description="6-string SVG chord diagram voicing for the detected chord",
+    )
+    notes_detected: List[str] = Field(
+        default_factory=list,
+        description="Musical pitch classes detected in the frame (e.g. ['C', 'E', 'G', 'B'])",
+    )
+    timestamp_ms: int = Field(..., ge=0, description="Frame timestamp or offset in milliseconds")
+
+
+LiveChordDetectionResult.model_rebuild()
+
