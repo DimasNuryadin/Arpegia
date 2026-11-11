@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import shutil
+import subprocess
 from unittest.mock import patch, MagicMock
 import pytest
 import numpy as np
@@ -215,17 +216,21 @@ class TestDemucsStemSeparator:
             in_path = tmp_in.name
         sf.write(in_path, dummy_other, sr)
 
+        real_run = subprocess.run
+
         def mock_subprocess_run(cmd, *args, **kwargs):
             # cmd includes -o <temp_dir>
-            out_idx = cmd.index("-o") + 1
-            out_dir = cmd[out_idx]
-            stem_dir = os.path.join(out_dir, "htdemucs", "test_track")
-            os.makedirs(stem_dir, exist_ok=True)
-            sf.write(os.path.join(stem_dir, "other.wav"), dummy_other, sr)
-            sf.write(os.path.join(stem_dir, "bass.wav"), dummy_bass, sr)
-            mock_res = MagicMock()
-            mock_res.returncode = 0
-            return mock_res
+            if isinstance(cmd, (list, tuple)) and "-o" in cmd:
+                out_idx = cmd.index("-o") + 1
+                out_dir = cmd[out_idx]
+                stem_dir = os.path.join(out_dir, "htdemucs", "test_track")
+                os.makedirs(stem_dir, exist_ok=True)
+                sf.write(os.path.join(stem_dir, "other.wav"), dummy_other, sr)
+                sf.write(os.path.join(stem_dir, "bass.wav"), dummy_bass, sr)
+                mock_res = MagicMock()
+                mock_res.returncode = 0
+                return mock_res
+            return real_run(cmd, *args, **kwargs)
 
         monkeypatch.setenv("ARPEGIA_ENABLE_DEMUCS", "true")
         monkeypatch.setattr(DemucsStemSeparator, "is_available", classmethod(lambda cls: True))
@@ -274,16 +279,20 @@ class TestDemucsStemSeparator:
                 captured_stem_dirs.append(td)
             return td
 
+        real_run = subprocess.run
+
         def mock_subprocess_run(cmd, *args, **kwargs):
-            out_idx = cmd.index("-o") + 1
-            out_dir = cmd[out_idx]
-            stem_dir = os.path.join(out_dir, "htdemucs", "audio")
-            os.makedirs(stem_dir, exist_ok=True)
-            sf.write(os.path.join(stem_dir, "other.wav"), test_wave, sr)
-            sf.write(os.path.join(stem_dir, "bass.wav"), test_wave, sr)
-            mock_res = MagicMock()
-            mock_res.returncode = 0
-            return mock_res
+            if isinstance(cmd, (list, tuple)) and "-o" in cmd:
+                out_idx = cmd.index("-o") + 1
+                out_dir = cmd[out_idx]
+                stem_dir = os.path.join(out_dir, "htdemucs", "audio")
+                os.makedirs(stem_dir, exist_ok=True)
+                sf.write(os.path.join(stem_dir, "other.wav"), test_wave, sr)
+                sf.write(os.path.join(stem_dir, "bass.wav"), test_wave, sr)
+                mock_res = MagicMock()
+                mock_res.returncode = 0
+                return mock_res
+            return real_run(cmd, *args, **kwargs)
 
         monkeypatch.setenv("ARPEGIA_ENABLE_DEMUCS", "true")
         monkeypatch.setattr(DemucsStemSeparator, "is_available", classmethod(lambda cls: True))

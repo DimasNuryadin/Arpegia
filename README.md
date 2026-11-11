@@ -1,12 +1,14 @@
 # Arpegia — AI-Powered Guitar Intelligence Platform
 
-> **Audio Analysis • Real-Time Async Pipeline Progress Streaming (WebSocket + HTTP Polling) • Chord & Key Intelligence • Biomechanical Guitar Tablature • Interactive Fretboard & Web Audio Synth • AI Fingerstyle & Style Arrangement Studio • Multi-Format Score Export (MIDI, MusicXML, PDF, ASCII)**
+> **Audio Analysis • Real-Time Async Pipeline Progress Streaming (WebSocket + HTTP Polling) • Chord & Key Intelligence • Biomechanical Guitar Tablature • Interactive Fretboard & Web Audio Synth • AI Fingerstyle & Style Arrangement Studio • Multi-Format Score Export (MIDI, MusicXML, PDF, ASCII) • Live Microphone Guitar Tuner (60fps Autocorrelation) • Real-Time Mic Chord Jamming Studio**
 
 ---
 
 ## Overview
 
-**Arpegia** is an end-to-end AI music intelligence platform engineered for guitarists, producers, and educators. It ingests raw audio tracks (`.mp3` or `.wav`), streams live pipeline telemetry across 5 execution stages (**Separating Stems** -> **Detecting Key & Tempo** -> **Recognizing Chords** -> **Transcribing Guitar Tab** -> **Generating Fingerstyle Arrangement**) via dual-transport **WebSocket** and **HTTP Polling**, executes digital signal processing (DSP) and LangGraph multi-agent orchestration to extract musical key, tempo, chord progressions, and fundamental pitches, maps notes onto a biomechanically playable 6-string guitar fretboard via Viterbi trellis dynamic programming, synthesizes polyphonic style arrangements (**Fingerstyle**, **Neo Soul**, **Jazz Chord Melody**, **Acoustic Strumming**), and exports publication-ready scores across **MIDI**, **MusicXML 4.0**, **PDF**, and **ASCII Tab**.
+**Arpegia** is an end-to-end AI music intelligence platform engineered for guitarists, producers, and educators. It provides dual top-level operating modes:
+1. **🎵 Studio Analysis:** Ingests raw audio tracks (`.mp3` or `.wav`), streams live pipeline telemetry across 5 execution stages (**Separating Stems** -> **Detecting Key & Tempo** -> **Recognizing Chords** -> **Transcribing Guitar Tab** -> **Generating Fingerstyle Arrangement**) via dual-transport **WebSocket** and **HTTP Polling**, executes digital signal processing (DSP) and LangGraph multi-agent orchestration to extract musical key, tempo, chord progressions, and fundamental pitches, maps notes onto a biomechanically playable 6-string guitar fretboard via Viterbi trellis dynamic programming, synthesizes polyphonic style arrangements (**Fingerstyle**, **Neo Soul**, **Jazz Chord Melody**, **Acoustic Strumming**), and exports publication-ready scores across **MIDI**, **MusicXML 4.0**, **PDF**, and **ASCII Tab**.
+2. **🎙️ Live Mic Studio:** High-precision real-time live performance suite featuring a **60fps Web Audio Microphone Guitar Tuner** (with smooth needle gauge, microtonal cents deviation, target frequency locking, reference tone plucking, and 5 canonical tuning presets) and a **Real-Time Mic Chord Jamming Studio** (sub-50ms 12-bin chromagram streaming over WebSocket `WS /ws/live-chord`, HTTP fallback `POST /api/v1/live/detect-chord`, dynamic 6-string SVG `ChordDiagram` voicings, rolling chord progression history, and built-in interactive Mic Simulator).
 
 ---
 
@@ -17,23 +19,31 @@
 ```mermaid
 flowchart LR
     subgraph Web["apps/web (Next.js 16 • Port 3000)"]
+        Switcher["Top-Level Mode Switcher (Studio Analysis vs Live Mic Studio)"]
         UI["Studio UI & Chord Timeline"]
         Stepper["5-Stage Pipeline Stepper UI"]
         Studio["AI Arrangement Studio"]
         Editor["Interactive Tab Editor"]
         Synth["Web Audio Polyphonic Synth"]
         ExportBar["Multi-Format Export Hub"]
+        Tuner["60fps Live Guitar Tuner (Autocorrelation Needle)"]
+        ChordHUD["Real-Time Live Chord Jamming HUD & SVG Voicings"]
     end
 
     subgraph API["apps/api (FastAPI • Port 8000)"]
         Router["REST v1 Gateway (/api/v1/analyze)"]
         WS["WebSocket Gateway (/ws/analyze/{id})"]
+        LiveRouter["Live Tuner & Chord Gateway (/api/v1/tuner, /api/v1/live)"]
+        LiveWS["Live Chord WebSocket (/ws/live-chord)"]
         AnalyzerSvc["AnalyzerService & Job Store"]
+        LiveSvc["LiveService (Presets & Chord Engine)"]
         ExportSvc["ExportService"]
     end
 
     subgraph Engine["services/audio-engine (LangGraph + Demucs + Basic Pitch + Librosa DSP)"]
         Graph["8-Node StateGraph Orchestrator"]
+        LiveDetector["live_detector.py (Presets, Pitch Eval, Chroma Engine)"]
+        Voicings["chord_voicings.py (6-String Chord Diagrams)"]
         ArrGen["ArrangementGenerator"]
         Exporters["Symbolic Exporters (MIDI / MusicXML / PDF / ASCII)"]
     end
@@ -43,12 +53,18 @@ flowchart LR
     Editor -->|"PUT /api/v1/analyze/{id}/tablature"| Router
     Studio -->|"POST /api/v1/analyze/{id}/arrange"| Router
     ExportBar -->|"GET /api/v1/analyze/{id}/export"| Router
+    Tuner -->|"GET /api/v1/tuner/presets"| LiveRouter
+    ChordHUD -->|"WS /ws/live-chord (fallback POST /api/v1/live/detect-chord)"| LiveWS
 
     Router --> AnalyzerSvc
     WS --> AnalyzerSvc
+    LiveRouter --> LiveSvc
+    LiveWS --> LiveSvc
     Router --> ExportSvc
     AnalyzerSvc -->|"progress_callback(stage, %, msg)"| Graph
     AnalyzerSvc --> ArrGen
+    LiveSvc --> LiveDetector
+    LiveDetector --> Voicings
     ExportSvc --> Exporters
 ```
 
@@ -93,7 +109,7 @@ arpegia/
 
 ---
 
-## Complete Feature Breakdown (Phases 1, 2 & 3)
+## Complete Feature Breakdown (Phases 1, 2, 3, 4 & 5)
 
 ### Phase 1: Chord, Key & Harmonic Intelligence
 - **DSP Key & Tempo Extraction:** Beat grid tracking, BPM detection, time signature estimation, and CQT chromagram key signature analysis.
@@ -132,6 +148,28 @@ arpegia/
   5. `generating_arrangement` (**85% -> 100%**): Polyphonic Fingerstyle voice separation (thumb bass + arpeggio harmony + melody) and Pydantic v2 schema lock validation.
 - **Seamless Studio View Handoff:** Once the pipeline reaches `100%` and emits `job.completed`, the stepper smoothly transitions directly to the interactive Studio workbench with the full `AnalysisResponse`.
 
+### Phase 5: Live Microphone Guitar Tuner (60fps Web Audio Autocorrelation + 5 Tuning Presets) & Real-Time Mic Chord Jamming Studio
+- **High-Precision 60fps Microphone Guitar Tuner (`GuitarTuner`):**
+  - **Autocorrelation / YIN Pitch Tracking:** Real-time Web Audio API pitch engine running at 60fps via `requestAnimationFrame` with parabolic interpolation, computing fundamental frequency ($f_0$) and microtonal deviation in cents ($1200 \times \log_2(f / f_{\text{target}})$) clamped to $[-50.0, +50.0]$.
+  - **Dynamic Needle Gauge & Tuning Badges:** Responsive visual needle gauge, target frequency indicator, and tuning status badge (`in_tune` when $|cents| \le 3.5$, `flat` when $cents < -3.5$, or `sharp` when $cents > +3.5$).
+  - **6-String Visual String Selector:** Displays guitar strings 1–6 with auto-detect string mode (minimizing cents deviation) or manual string override locking.
+  - **5 Canonical Guitar Tuning Presets (`GET /api/v1/tuner/presets`):**
+    - `standard`: E2 (82.41 Hz), A2 (110.00 Hz), D3 (146.83 Hz), G3 (196.00 Hz), B3 (246.94 Hz), E4 (329.63 Hz)
+    - `drop_d`: D2 (73.42 Hz), A2 (110.00 Hz), D3 (146.83 Hz), G3 (196.00 Hz), B3 (246.94 Hz), E4 (329.63 Hz)
+    - `half_step_down`: Eb2 (77.78 Hz), Ab2 (103.83 Hz), Db3 (138.59 Hz), Gb3 (185.00 Hz), Bb3 (233.08 Hz), Eb4 (311.13 Hz)
+    - `open_g`: D2 (73.42 Hz), G2 (98.00 Hz), D3 (146.83 Hz), G3 (196.00 Hz), B3 (246.94 Hz), D4 (293.66 Hz)
+    - `dadgad`: D2 (73.42 Hz), A2 (110.00 Hz), D3 (146.83 Hz), G3 (196.00 Hz), A3 (220.00 Hz), D4 (293.66 Hz)
+    Supports custom concert pitch reference scaling (`reference_a4_hz`, e.g., 432 Hz).
+  - **Interactive Reference Tone Plucking:** Instant Karplus-Strong Web Audio plucked string sound for each target string note to facilitate ear-tuning.
+- **Real-Time Mic Chord Jamming Studio (`LiveChordDetector`):**
+  - **Sub-50ms 12-Bin Chromagram Detection:** Extracts live harmonic energy vectors $[C, C\sharp, D, D\sharp, E, F, F\sharp, G, G\sharp, A, A\sharp, B]$ and matches against 108 precomputed chord templates (12 roots $\times$ 9 qualities: Major, Minor, 7, maj7, m7, sus4, sus2, dim, aug).
+  - **Bi-Directional WebSocket Streaming (`WS /ws/live-chord`):** Continuous frame streaming accepting `LiveChordFrameRequest` JSON frames (or `{ "type": "ping" }` heartbeat) and returning structured `LiveChordDetectionResult` with sub-50ms latency.
+  - **Automatic Fallback Architecture:** Seamlessly falls back to `POST /api/v1/live/detect-chord` REST endpoint and client-side cosine similarity DSP if the network is interrupted or when operating offline in Mock Mode.
+  - **Distraction-Free Live HUD:** High-contrast full-screen performance interface displaying the recognized chord symbol, quality label, confidence meter, detected pitch classes, and real-time 6-string SVG `ChordDiagram` voicing with frets and fingerings.
+  - **Rolling Chord Progression History:** Automatically captures and timestamps recognized chord changes into a scrollable progression tape for jam session review.
+  - **Built-in Microphone Demo Simulator (`LiveMicSimulator`):** Allows instant evaluation of tuner needle tracking and live chord recognition without requiring hardware microphone permissions.
+- **Top-Level Mode Switcher:** Seamless navbar switcher toggling between `🎵 Studio Analysis` (audio upload, stem separation, transcription, arrangement, export) and `🎙️ Live Mic Studio` (guitar tuner, real-time chord detection) while preserving application state.
+
 ---
 
 ## Canonical Port Registry & REST API Summary
@@ -139,7 +177,7 @@ arpegia/
 | Service | Workspace Path | Port | Base URL / Protocols |
 | :--- | :--- | :--- | :--- |
 | **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
-| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`ws://localhost:8000/ws/analyze/{job_id}` |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`ws://localhost:8000/ws/analyze/{job_id}`<br>`ws://localhost:8000/ws/live-chord` |
 | **Audio Engine (DSP & LangGraph)** | `services/audio-engine/` | In-process / Worker | Invoked by `apps/api` |
 
 | Method | Endpoint | Description |
@@ -152,6 +190,9 @@ arpegia/
 | `PUT` | `/api/v1/analyze/{job_id}/tablature` | Update note string/fret/technique and regenerate `ascii_tab` |
 | `POST` | `/api/v1/analyze/{job_id}/arrange` | Synthesize and persist a new `ArrangementVariation` |
 | `GET` | `/api/v1/analyze/{job_id}/export` | Download score as `midi`, `musicxml`, `pdf`, or `ascii` |
+| `GET` | `/api/v1/tuner/presets` | Retrieve 5 canonical guitar tuning presets (standard, drop_d, half_step_down, open_g, dadgad) with exact physical target frequencies |
+| `POST` | `/api/v1/live/detect-chord` | Real-time single-frame chord recognition from 12-bin chroma vector or PCM audio with 6-string `ChordDiagram` voicing |
+| `WS` | `/ws/live-chord` | Low-latency real-time bidirectional WebSocket stream for live microphone chord jamming with `{ "type": "ping" }` heartbeat support |
 
 Full request/response schemas and error envelopes are documented in [docs/api-contract.md](docs/api-contract.md).
 
@@ -211,7 +252,7 @@ pytest
 ```
 
 ### 2. Automated Cross-Platform Full-Stack E2E Smoke Test (`scripts/e2e_test.mjs`)
-Verifies the complete Phase 1 + 2 + 3 + 4 flow against a live server (automatically spawns `uvicorn` if not already running):
+Verifies the complete Phase 1 + 2 + 3 + 4 + 5 flow against a live server (automatically spawns `uvicorn` if not already running):
 1. `GET /health` -> asserts `200 OK`.
 2. `POST /api/v1/analyze` (Synchronous Backward-Compatibility Check) with a synthesized multi-note guitar WAV file -> validates `chords`, `improvisations`, `chord_diagrams`, `tablature`, initial `arrangements` with polyphonic `voice` roles, and completed `progress.overall_percent == 100`.
 3. `PUT /api/v1/analyze/{job_id}/tablature` -> edits a note's `fret` and `technique` (`slide`) and verifies regenerated `ascii_tab`.
@@ -220,6 +261,10 @@ Verifies the complete Phase 1 + 2 + 3 + 4 flow against a live server (automatica
 6. `GET /api/v1/analyze/{job_id}/export` across all 4 formats (`midi`, `musicxml`, `pdf`, `ascii`) for both base tablature and the custom `arrangement_id` -> validates magic bytes (`MThd`, `<?xml` + `<score-partwise`, `%PDF-`, and 6-line ASCII staff).
 7. `POST /api/v1/analyze?async_mode=true` & `GET /api/v1/analyze/{job_id}/progress` (Async + HTTP Polling Flow) -> polls until completion and asserts all 5 pipeline stages reached `completed`/`skipped` with full `AnalysisResponse` result.
 8. `WS /ws/analyze/{job_id}` (WebSocket Real-Time Progress Streaming) -> connects to WebSocket endpoint, verifies non-decreasing `JobProgressEvent` frames `[10% -> 25% -> 30% -> ... -> 99% -> 100%]`, and asserts terminal `job.completed` frame delivers full `AnalysisResponse`.
+9. `GET /api/v1/tuner/presets` (Phase 5 Guitar Tuner Presets) -> verifies all 5 presets (`standard`, `drop_d`, `half_step_down`, `open_g`, `dadgad`) and physical string frequencies (e.g. Standard String 6 E2 82.41 Hz, String 1 E4 329.63 Hz).
+10. `POST /api/v1/live/detect-chord` (Phase 5 Live Chroma Detection) -> evaluates C Major 7 chroma vector (`C, E, G, B`), verifying recognition of `"Cmaj7"` (or `"C"`) with confidence > 0.5 and valid 6-string `ChordDiagram` voicing.
+11. `POST /api/v1/live/detect-chord` (Phase 5 Live PCM Detection) -> evaluates synthesized A Minor chord audio (`A2 + E3 + A3 + C4 + E4`), verifying `"Am"` chord recognition and 6-string voicing diagram.
+12. `WS /ws/live-chord` (Phase 5 Real-Time WebSocket Chord Jamming) -> verifies heartbeat `{ "type": "ping" }` -> `{ "type": "pong" }`, streams real-time chroma frames for progression `G -> Em -> C -> D`, and asserts instant structured `LiveChordDetectionResult` responses with full SVG voicing diagrams.
 
 ```bash
 node scripts/e2e_test.mjs

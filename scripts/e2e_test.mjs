@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Arpegia Phase 1, Phase 2, Phase 3 & Phase 4 End-to-End (E2E) Integration & Smoke Test
+ * Arpegia Phase 1, Phase 2, Phase 3, Phase 4 & Phase 5 End-to-End (E2E) Integration & Smoke Test
  *
  * Verifies live communication across services:
  * a. Checks GET /health -> asserts 200 OK.
@@ -21,6 +21,14 @@
  *    and GET /api/v1/analyze/{job_id}/progress) verifying all 5 pipeline stages reach completion.
  * g. Tests Phase 4 WebSocket Real-Time Streaming (WS /ws/analyze/{job_id}) asserting structured
  *    JobProgressEvent frames with non-decreasing overall_percent reaching 100% with full result.
+ * h. Tests Phase 5 Guitar Tuner Presets (GET /api/v1/tuner/presets) verifying all 5 presets
+ *    and physical target frequencies (standard string 6 E2 82.41 Hz, string 1 E4 329.63 Hz).
+ * i. Tests Phase 5 Live Chroma Chord Detection (POST /api/v1/live/detect-chord with Cmaj7 chroma)
+ *    verifying chord recognition and 6-string ChordDiagram voicing.
+ * j. Tests Phase 5 Live PCM Chord Detection (POST /api/v1/live/detect-chord with Am PCM samples)
+ *    verifying acoustic chord recognition.
+ * k. Tests Phase 5 Real-Time WebSocket Chord Jamming (WS /ws/live-chord) with ping/pong and
+ *    streaming chroma frames for G, Em, C, D with full SVG voicing diagrams.
  */
 
 import { spawn } from "node:child_process";
@@ -102,6 +110,13 @@ async function checkHealth(baseUrl) {
  * Find local python executable.
  */
 function findPythonExecutable() {
+  if (process.env.PYTHON_EXE && existsSync(process.env.PYTHON_EXE)) {
+    return process.env.PYTHON_EXE;
+  }
+  const apiVenvWin = resolve(ROOT_DIR, "apps", "api", ".venv", "Scripts", "python.exe");
+  const apiVenvPosix = resolve(ROOT_DIR, "apps", "api", ".venv", "bin", "python");
+  if (existsSync(apiVenvWin)) return apiVenvWin;
+  if (existsSync(apiVenvPosix)) return apiVenvPosix;
   const venvWin = resolve(ROOT_DIR, ".venv", "Scripts", "python.exe");
   const venvPosix = resolve(ROOT_DIR, ".venv", "bin", "python");
   if (existsSync(venvWin)) return venvWin;
@@ -180,14 +195,14 @@ async function verifyFourExports(baseUrl, jobId, arrangementId = null) {
  */
 async function runSmokeTest() {
   console.log("\n🎸 ===================================================================");
-  console.log("   Arpegia Phase 1 + 2 + 3 + 4 E2E Integration & Smoke Test (Live API)");
+  console.log("   Arpegia Phase 1 + 2 + 3 + 4 + 5 E2E Integration & Smoke Test (Live API)");
   console.log("=====================================================================\n");
 
   const startTime = Date.now();
   let serverProcess = null;
 
   // Step A: Healthcheck
-  console.log(`[1/8] Checking API gateway health at ${API_URL}/health ...`);
+  console.log(`[1/12] Checking API gateway health at ${API_URL}/health ...`);
   let isAlive = await checkHealth(API_URL);
 
   if (!isAlive) {
@@ -244,7 +259,7 @@ async function runSmokeTest() {
 
   try {
     // Step B: Synthesize WAV & POST /api/v1/analyze (Sync Backward-Compat)
-    console.log("\n[2/8] Synthesizing multi-note guitar WAV & running POST /api/v1/analyze (Sync Backward-Compat)...");
+    console.log("\n[2/12] Synthesizing multi-note guitar WAV & running POST /api/v1/analyze (Sync Backward-Compat)...");
     const wavBuffer = createSyntheticGuitarArpeggioWav({
       frequencies: [164.81, 196.00, 246.94, 329.63], // E3, G3, B3, E4
       noteDuration: 0.5,
@@ -320,7 +335,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Phase 3 Default Arrangement: "${defaultArr.title}" (${defaultArr.arrangement_id}) with voices [${Array.from(defaultVoices).join(", ")}]`);
 
     // Step C: Interactive Tab Note Edit (PUT /api/v1/analyze/{job_id}/tablature)
-    console.log("\n[3/8] Testing Interactive Tab Editor (PUT /api/v1/analyze/{job_id}/tablature)...");
+    console.log("\n[3/12] Testing Interactive Tab Editor (PUT /api/v1/analyze/{job_id}/tablature)...");
     const targetNote = m1Notes[0];
     const targetFret = 4;
     const targetTech = "slide";
@@ -360,7 +375,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Note '${targetNote.id}' updated to fret=${targetFret}, technique='${targetTech}' (${updatedTarget.note_name}, MIDI ${updatedTarget.midi}) & ASCII tab regenerated`);
 
     // Step D: Phase 3 On-Demand Style Arrangement (POST /api/v1/analyze/{job_id}/arrange)
-    console.log("\n[4/8] Generating Phase 3 Custom Arrangement (POST /api/v1/analyze/{job_id}/arrange)...");
+    console.log("\n[4/12] Generating Phase 3 Custom Arrangement (POST /api/v1/analyze/{job_id}/arrange)...");
     const arrangeRequest = {
       style: "Neo Soul",
       difficulty: "Advanced",
@@ -396,7 +411,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Generated "${newArrangement.title}" (ID: ${newArrangement.arrangement_id}, Capo: ${newArrangement.tablature.capo}, Chords: [${newArrangement.chords_used.join(", ")}], Voices: [${Array.from(arrVoices).join(", ")}])`);
 
     // Step E: Verify persistence in GET /api/v1/analyze/{job_id}
-    console.log("\n[5/8] Verifying job store persistence via GET /api/v1/analyze/{job_id}...");
+    console.log("\n[5/12] Verifying job store persistence via GET /api/v1/analyze/{job_id}...");
     const getRes = await fetch(`${API_URL}/api/v1/analyze/${analysis.job_id}`);
     if (!getRes.ok) {
       throw new Error(`GET /api/v1/analyze/{job_id} failed with HTTP ${getRes.status}`);
@@ -411,12 +426,12 @@ async function runSmokeTest() {
     console.log(`  ✓ GET /api/v1/analyze/${analysis.job_id} confirmed persisted tab edits and ${retrievedAnalysis.arrangements.length} arrangements`);
 
     // Step F: Verify Multi-Format Export across all 4 formats for both base tablature and new arrangement_id
-    console.log("\n[6/8] Testing Multi-Format Export (GET /api/v1/analyze/{job_id}/export) across MIDI, MusicXML, PDF, and ASCII...");
+    console.log("\n[6/12] Testing Multi-Format Export (GET /api/v1/analyze/{job_id}/export) across MIDI, MusicXML, PDF, and ASCII...");
     await verifyFourExports(API_URL, analysis.job_id, null);
     await verifyFourExports(API_URL, analysis.job_id, newArrangement.arrangement_id);
 
     // Step G: Phase 4 Async Pipeline + HTTP Polling Fallback
-    console.log("\n[7/8] Testing Phase 4 Async Pipeline + HTTP Polling Fallback (POST /api/v1/analyze?async_mode=true)...");
+    console.log("\n[7/12] Testing Phase 4 Async Pipeline + HTTP Polling Fallback (POST /api/v1/analyze?async_mode=true)...");
     const asyncWav = createSyntheticGuitarArpeggioWav({
       frequencies: [164.81, 196.00, 246.94, 329.63],
       noteDuration: 0.5,
@@ -482,7 +497,7 @@ async function runSmokeTest() {
     console.log(`  ✓ Result payload contains ${pollCompleted.result.chords.length} chords, ${pollCompleted.result.tablature.measures.length} measures, and ${pollCompleted.result.arrangements.length} arrangements`);
 
     // Step H: Phase 4 WebSocket Real-Time Progress Streaming
-    console.log("\n[8/8] Testing Phase 4 WebSocket Real-Time Progress Streaming (WS /ws/analyze/{job_id})...");
+    console.log("\n[8/12] Testing Phase 4 WebSocket Real-Time Progress Streaming (WS /ws/analyze/{job_id})...");
     const wsWav = createSyntheticGuitarArpeggioWav({
       frequencies: [164.81, 196.00, 246.94, 329.63],
       noteDuration: 0.5,
@@ -571,9 +586,193 @@ async function runSmokeTest() {
     console.log(`  ✓ Non-decreasing telemetry sequence: [${frames.map((f) => `${f.overall_percent}%`).join(" -> ")}]`);
     console.log(`  ✓ Final WebSocket frame verified: event="${lastFrame.event}", status="${lastFrame.status}", overall_percent=${lastFrame.overall_percent}% with full AnalysisResponse (chords=${lastFrame.result.chords.length}, measures=${lastFrame.result.tablature.measures.length}, arrangements=${lastFrame.result.arrangements.length})`);
 
+    // Step I: Phase 5 Guitar Tuner Presets (GET /api/v1/tuner/presets)
+    console.log("\n[9/12] Testing Phase 5 Guitar Tuner Presets (GET /api/v1/tuner/presets)...");
+    const presetsRes = await fetch(`${API_URL}/api/v1/tuner/presets`);
+    if (!presetsRes.ok) {
+      throw new Error(`GET /api/v1/tuner/presets failed with HTTP ${presetsRes.status}`);
+    }
+    const presetsData = await presetsRes.json();
+    if (!Array.isArray(presetsData) || presetsData.length !== 5) {
+      throw new Error(`Expected 5 tuning presets, got ${presetsData?.length}`);
+    }
+    const expectedPresetIds = ["standard", "drop_d", "half_step_down", "open_g", "dadgad"];
+    const actualPresetIds = presetsData.map((p) => p.id);
+    for (const id of expectedPresetIds) {
+      if (!actualPresetIds.includes(id)) {
+        throw new Error(`Missing canonical tuning preset '${id}'`);
+      }
+    }
+    const standardPreset = presetsData.find((p) => p.id === "standard");
+    const s6 = standardPreset.strings.find((s) => s.string === 6);
+    const s1 = standardPreset.strings.find((s) => s.string === 1);
+    if (!s6 || s6.note !== "E2" || Math.abs(s6.frequency_hz - 82.41) > 0.1) {
+      throw new Error(`Standard tuning String 6 mismatch: expected E2 (82.41 Hz), got ${s6?.note} (${s6?.frequency_hz} Hz)`);
+    }
+    if (!s1 || s1.note !== "E4" || Math.abs(s1.frequency_hz - 329.63) > 0.1) {
+      throw new Error(`Standard tuning String 1 mismatch: expected E4 (329.63 Hz), got ${s1?.note} (${s1?.frequency_hz} Hz)`);
+    }
+    console.log(`  ✓ Verified 5 canonical tuning presets [${actualPresetIds.join(", ")}]`);
+    console.log(`  ✓ Standard Tuning: String 6=${s6.note} (${s6.frequency_hz} Hz), String 1=${s1.note} (${s1.frequency_hz} Hz)`);
+
+    // Step J: Phase 5 Live Chroma Chord Detection (POST /api/v1/live/detect-chord with Cmaj7 chroma)
+    console.log("\n[10/12] Testing Phase 5 Live Chroma Chord Detection (POST /api/v1/live/detect-chord with Cmaj7 chroma)...");
+    // C Major 7 chroma: C (0), E (4), G (7), B (11)
+    const cmaj7Chroma = new Array(12).fill(0);
+    [0, 4, 7, 11].forEach((idx) => { cmaj7Chroma[idx] = 1.0; });
+    const chromaRes = await fetch(`${API_URL}/api/v1/live/detect-chord`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chroma: cmaj7Chroma,
+        sample_rate: 22050,
+        tuning_preset: "standard",
+      }),
+    });
+    if (!chromaRes.ok) {
+      throw new Error(`Chroma detect-chord failed with HTTP ${chromaRes.status}`);
+    }
+    const chromaData = await chromaRes.json();
+    if (chromaData.chord !== "Cmaj7" && chromaData.chord !== "C") {
+      throw new Error(`Expected chord 'Cmaj7' or 'C', got '${chromaData.chord}'`);
+    }
+    if (typeof chromaData.confidence !== "number" || chromaData.confidence <= 0.5) {
+      throw new Error(`Confidence too low: ${chromaData.confidence}`);
+    }
+    if (!chromaData.voicing || !Array.isArray(chromaData.voicing.frets) || chromaData.voicing.frets.length !== 6) {
+      throw new Error(`Invalid voicing diagram frets array: ${JSON.stringify(chromaData.voicing)}`);
+    }
+    console.log(`  ✓ Detected chord: "${chromaData.chord}" (confidence: ${(chromaData.confidence * 100).toFixed(0)}%, root: "${chromaData.root}", quality: "${chromaData.quality}")`);
+    console.log(`  ✓ 6-string Voicing: frets=[${chromaData.voicing.frets.join(", ")}], base_fret=${chromaData.voicing.base_fret}`);
+
+    // Step K: Phase 5 Live PCM Audio Chord Detection (POST /api/v1/live/detect-chord with Am PCM samples)
+    console.log("\n[11/12] Testing Phase 5 Live PCM Audio Chord Detection (POST /api/v1/live/detect-chord with Am PCM samples)...");
+    const pcmSr = 22050;
+    const pcmDur = 0.5;
+    const numPcmSamples = Math.floor(pcmSr * pcmDur);
+    const amSamples = new Array(numPcmSamples);
+    // A2 (110.0), E3 (164.81), A3 (220.0), C4 (261.63), E4 (329.63)
+    for (let i = 0; i < numPcmSamples; i++) {
+      const t = i / pcmSr;
+      const s = (
+        Math.sin(2 * Math.PI * 110.0 * t) +
+        Math.sin(2 * Math.PI * 164.81 * t) +
+        Math.sin(2 * Math.PI * 220.0 * t) +
+        Math.sin(2 * Math.PI * 261.63 * t) +
+        Math.sin(2 * Math.PI * 329.63 * t)
+      ) / 5.0;
+      amSamples[i] = s;
+    }
+    const pcmRes = await fetch(`${API_URL}/api/v1/live/detect-chord`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pcm_samples: amSamples,
+        sample_rate: pcmSr,
+        tuning_preset: "standard",
+      }),
+    });
+    if (!pcmRes.ok) {
+      throw new Error(`PCM detect-chord failed with HTTP ${pcmRes.status}`);
+    }
+    const pcmData = await pcmRes.json();
+    if (pcmData.chord !== "Am") {
+      throw new Error(`Expected chord 'Am' for A Minor PCM synthesis, got '${pcmData.chord}'`);
+    }
+    if (!pcmData.voicing || !Array.isArray(pcmData.voicing.frets) || pcmData.voicing.frets.length !== 6) {
+      throw new Error(`PCM detection missing valid 6-string voicing: ${JSON.stringify(pcmData.voicing)}`);
+    }
+    console.log(`  ✓ Acoustic PCM chord recognized: "${pcmData.chord}" (root: "${pcmData.root}", quality: "${pcmData.quality}", confidence: ${(pcmData.confidence * 100).toFixed(0)}%)`);
+    console.log(`  ✓ Voicing diagram: frets=[${pcmData.voicing.frets.join(", ")}], fingers=[${pcmData.voicing.fingers.join(", ")}]`);
+
+    // Step L: Phase 5 Real-Time WebSocket Chord Jamming (WS /ws/live-chord)
+    console.log("\n[12/12] Testing Phase 5 Real-Time WebSocket Chord Jamming (WS /ws/live-chord)...");
+    const liveWsEndpoint = `${wsProtocol}//${wsHost}/ws/live-chord`;
+    console.log(`  ✓ Connecting to live chord WebSocket endpoint: ${liveWsEndpoint}`);
+
+    const liveWsPromise = new Promise((resolveLiveWs, rejectLiveWs) => {
+      const liveTimeout = setTimeout(() => {
+        try { liveWs.close(); } catch {}
+        rejectLiveWs(new Error("Timeout waiting for Phase 5 WebSocket live chord responses"));
+      }, 15000);
+
+      const liveWs = new globalThis.WebSocket(liveWsEndpoint);
+      let stage = "ping";
+      const progressionQueue = [
+        { name: "G", pitches: [7, 11, 2], family: "G" },
+        { name: "Em", pitches: [4, 7, 11], family: "Em" },
+        { name: "C", pitches: [0, 4, 7], family: "C" },
+        { name: "D", pitches: [2, 6, 9], family: "D" },
+      ];
+      let currentIdx = 0;
+      const detectedResults = [];
+
+      const sendNextChroma = () => {
+        if (currentIdx < progressionQueue.length) {
+          const item = progressionQueue[currentIdx];
+          const vec = new Array(12).fill(0);
+          item.pitches.forEach((p) => { vec[p] = 1.0; });
+          liveWs.send(JSON.stringify({
+            chroma: vec,
+            sample_rate: 22050,
+            tuning_preset: "standard",
+          }));
+        }
+      };
+
+      liveWs.onopen = () => {
+        // 1. Send ping
+        liveWs.send(JSON.stringify({ type: "ping" }));
+      };
+
+      liveWs.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (stage === "ping") {
+            if (payload.type !== "pong") {
+              throw new Error(`Expected 'pong' response to ping, got: ${JSON.stringify(payload)}`);
+            }
+            console.log("  ✓ Received heartbeat response: { type: \"pong\" }");
+            stage = "streaming";
+            sendNextChroma();
+          } else if (stage === "streaming") {
+            const expected = progressionQueue[currentIdx];
+            if (!payload.chord || (!payload.chord.startsWith(expected.family) && payload.chord !== expected.name)) {
+              throw new Error(`Frame ${currentIdx + 1} (${expected.name}) mismatch: got chord '${payload.chord}'`);
+            }
+            if (!payload.voicing || !Array.isArray(payload.voicing.frets) || payload.voicing.frets.length !== 6) {
+              throw new Error(`Frame ${currentIdx + 1} missing 6-string voicing diagram`);
+            }
+            detectedResults.push({ target: expected.name, result: payload });
+            console.log(`  ✓ Streamed "${expected.name}" -> Recognized "${payload.chord}" (confidence: ${(payload.confidence * 100).toFixed(0)}%, voicing frets=[${payload.voicing.frets.join(", ")}])`);
+            currentIdx++;
+            if (currentIdx < progressionQueue.length) {
+              sendNextChroma();
+            } else {
+              clearTimeout(liveTimeout);
+              try { liveWs.close(); } catch {}
+              resolveLiveWs(detectedResults);
+            }
+          }
+        } catch (err) {
+          clearTimeout(liveTimeout);
+          try { liveWs.close(); } catch {}
+          rejectLiveWs(err);
+        }
+      };
+
+      liveWs.onerror = (err) => {
+        clearTimeout(liveTimeout);
+        rejectLiveWs(new Error(`Live chord WebSocket error: ${err.message || err}`));
+      };
+    });
+
+    const streamedChords = await liveWsPromise;
+    console.log(`  ✓ All ${streamedChords.length} progression chord frames streamed and verified in real time`);
+
     const durationSeconds = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log("\n=====================================================================");
-    console.log(`🎉 ALL PHASE 1, 2, 3 & 4 E2E SMOKE TESTS PASSED SUCCESSFULLY (${durationSeconds}s)`);
+    console.log(`🎉 ALL PHASE 1, 2, 3, 4 & 5 E2E SMOKE TESTS PASSED SUCCESSFULLY (${durationSeconds}s)`);
     console.log("=====================================================================\n");
   } finally {
     if (serverProcess) {
