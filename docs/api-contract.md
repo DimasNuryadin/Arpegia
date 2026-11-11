@@ -1,6 +1,6 @@
-# Arpegia API & Data Contract Specification (Phase 1, Phase 2, Phase 3 & Phase 4)
+# Arpegia API & Data Contract Specification (Phase 1, Phase 2, Phase 3, Phase 4 & Phase 5)
 
-> **Status:** LOCKED (Gate 1 Physical Contract — Phase 4)  
+> **Status:** LOCKED (Gate 1 Physical Contract — Phase 5)  
 > **TypeScript Source of Truth:** [`packages/shared-types/index.ts`](../packages/shared-types/index.ts)  
 > **Python Pydantic v2 Source of Truth:** [`packages/shared-types/schemas.py`](../packages/shared-types/schemas.py)
 
@@ -11,7 +11,7 @@
 | Service | Workspace Path | Port | Base URL / Protocols |
 | :--- | :--- | :--- | :--- |
 | **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
-| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`ws://localhost:8000/ws/analyze/{job_id}` |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`ws://localhost:8000/ws/analyze/{job_id}`<br>`ws://localhost:8000/ws/live-chord` |
 | **Audio Engine (DSP & LangGraph)** | `services/audio-engine/` | In-process / Worker | Invoked by `apps/api` |
 
 ---
@@ -105,9 +105,58 @@ Request payload for generating a custom arrangement variation (`POST /api/v1/ana
 - `capo`: `int` — Capo fret position (default `0`, range `0` to `12`).
 - `tempo_scale`: `float` — Tempo scaling multiplier (default `1.0`, range `0.5` to `1.5`).
 
+### 2.11 `TuningPresetId` & `TuningStatus` (Phase 5)
+- `TuningPresetId`: `Literal["standard", "drop_d", "half_step_down", "open_g", "dadgad"]`
+- `TuningStatus`: `Literal["flat", "in_tune", "sharp"]` (`in_tune` when `abs(cents_deviation) <= 3.5`)
+
+### 2.12 `TuningStringTarget` (Phase 5)
+Target frequency and pitch specifications for an individual guitar string:
+- `string`: `int` — Guitar string number from `1` to `6` (`1` = High E, `6` = Low E).
+- `note`: `string` — Target note name with octave (e.g., `"E2"`, `"A2"`, `"D3"`, `"G3"`, `"B3"`, `"E4"`).
+- `frequency_hz`: `float` — Exact target pitch frequency in Hertz (e.g., `82.41`, `110.00`, `146.83`, `196.00`, `246.94`, `329.63`).
+- `midi`: `int` — MIDI pitch number (e.g., `40`, `45`, `50`, `55`, `59`, `64`).
+
+### 2.13 `TuningPreset` (Phase 5)
+Canonical 6-string guitar tuning preset definition:
+- `id`: `TuningPresetId` — Unique preset identifier (`"standard"`, `"drop_d"`, `"half_step_down"`, `"open_g"`, `"dadgad"`).
+- `name`: `string` — Human-readable preset name (e.g., `"Standard (E A D G B E)"`).
+- `description`: `string` — Description of the tuning and typical musical genres.
+- `reference_a4_hz`: `float` — Reference concert pitch frequency in Hz (default `440.0`).
+- `strings`: `List[TuningStringTarget]` — Exactly 6 string targets ordered from String 6 (Low) to String 1 (High).
+
+### 2.14 `TunerPitchResult` (Phase 5)
+Pitch evaluation output comparing detected microphone audio against target string pitch:
+- `detected_frequency_hz`: `float` — Detected pitch frequency in Hertz.
+- `detected_note`: `string` — Identified musical note (e.g., `"E2"`).
+- `closest_string`: `int` — Closest matching guitar string (`1` to `6`).
+- `target_note`: `string` — Target note name for the closest string.
+- `target_frequency_hz`: `float` — Target frequency in Hz for the closest string.
+- `cents_deviation`: `float` — Deviation in cents (`-50.0` to `+50.0`, `0.0` is in tune). Formula: `1200 * log2(detected_freq / target_freq)`.
+- `tuning_status`: `TuningStatus` — `"in_tune"` when `abs(cents_deviation) <= 3.5`, else `"flat"` or `"sharp"`.
+- `confidence`: `float` — Pitch detection confidence score (`0.0` to `1.0`).
+
+### 2.15 `LiveChordFrameRequest` (Phase 5)
+Request frame sent for real-time chord detection (via REST or WebSocket):
+- `chroma`: `Optional[List[float]]` — 12-element pitch class energy vector `[C, C#, D, D#, E, F, F#, G, G#, A, A#, B]`, normalized `0.0` to `1.0`.
+- `pcm_samples`: `Optional[List[float]]` — Optional mono audio PCM buffer (e.g., 2048 or 4096 samples).
+- `sample_rate`: `int` — Audio sample rate in Hertz (default `22050`).
+- `tuning_preset`: `TuningPresetId` — Guitar tuning preset identifier (default `"standard"`).
+
+### 2.16 `LiveChordDetectionResult` (Phase 5)
+Result frame streamed back for live microphone chord recognition:
+- `chord`: `string` — Detected chord symbol (e.g., `"Cmaj7"`, `"Am"`, `"G7"`, or `"N"` when silence/unrecognized).
+- `root`: `string` — Chord root note (e.g., `"C"`, `"A"`, `"G"`).
+- `quality`: `string` — Chord harmonic quality (e.g., `"maj7"`, `"minor"`, `"dom7"`).
+- `confidence`: `float` — Chord recognition confidence score (`0.0` to `1.0`).
+- `voicing`: `Optional[ChordDiagram]` — 6-string SVG chord diagram voicing for the detected chord.
+- `notes_detected`: `List[string]` — Musical pitch classes detected in the frame (e.g., `["C", "E", "G", "B"]`).
+- `timestamp_ms`: `int` — Frame timestamp or offset in milliseconds.
+
 ---
 
-## 3. Internal Python Callback Contract (`apps/api` <-> `services/audio-engine`)
+## 3. Internal Python Service Contracts (`apps/api` <-> `services/audio-engine`)
+
+### 3.1 Pipeline Progress Callback Contract (`engine/orchestrator.py`)
 
 The orchestrator in `services/audio-engine` exposes a callable signature accepting an optional real-time progress callback:
 
@@ -131,6 +180,77 @@ def run_pipeline(
     
     Returns:
         dict: Conforming to AnalysisOutput / AnalysisResponse schemas.
+    """
+```
+
+### 3.2 Phase 5 Live Detection Helper Contract (`services/audio-engine/engine/live_detector.py`)
+
+The live detection module in `services/audio-engine` exposes helper functions called directly by `apps/api` endpoints (`GET /api/v1/tuner/presets`, `POST /api/v1/live/detect-chord`, `WS /ws/live-chord`):
+
+```python
+def get_tuning_presets(reference_a4_hz: float = 440.0) -> list[dict]:
+    """Retrieves all 5 canonical guitar tuning presets with exact target frequencies.
+    
+    Args:
+        reference_a4_hz: Reference concert pitch in Hertz (default 440.0).
+        
+    Returns:
+        list[dict]: List of tuning presets conforming to TuningPreset schema:
+            - standard: E2 (82.41), A2 (110.00), D3 (146.83), G3 (196.00), B3 (246.94), E4 (329.63)
+            - drop_d: D2 (73.42), A2 (110.00), D3 (146.83), G3 (196.00), B3 (246.94), E4 (329.63)
+            - half_step_down: Eb2 (77.78), Ab2 (103.83), Db3 (138.59), Gb3 (185.00), Bb3 (233.08), Eb4 (311.13)
+            - open_g: D2 (73.42), G2 (98.00), D3 (146.83), G3 (196.00), B3 (246.94), D4 (293.66)
+            - dadgad: D2 (73.42), A2 (110.00), D3 (146.83), G3 (196.00), A3 (220.00), D4 (293.66)
+    """
+
+
+def evaluate_tuner_pitch(
+    frequency_hz: float,
+    preset_id: str = "standard",
+    target_string: Optional[int] = None,
+) -> dict:
+    """Evaluates a detected microphone pitch frequency against guitar tuning targets.
+    
+    Args:
+        frequency_hz: Detected fundamental frequency (f0) in Hertz.
+        preset_id: One of 'standard', 'drop_d', 'half_step_down', 'open_g', 'dadgad'.
+        target_string: Optional manual string override (1 to 6). If None, auto-detects
+            the string with the minimum absolute cents deviation.
+            
+    Returns:
+        dict: Conforming to TunerPitchResult schema:
+            - detected_frequency_hz: float
+            - detected_note: str (e.g. "E2")
+            - closest_string: int (1 to 6)
+            - target_note: str
+            - target_frequency_hz: float
+            - cents_deviation: float in [-50.0, 50.0], where cents = 1200 * log2(f / target_f)
+            - tuning_status: 'in_tune' if abs(cents_deviation) <= 3.5 else ('flat' if cents_deviation < 0 else 'sharp')
+            - confidence: float in [0.0, 1.0]
+    """
+
+
+def detect_live_chord_from_frame(
+    chroma: Optional[list[float]] = None,
+    pcm_samples: Optional[list[float]] = None,
+    sample_rate: int = 22050,
+) -> dict:
+    """Recognizes a chord in real time from a live audio frame or pre-computed chromagram.
+    
+    Args:
+        chroma: Optional 12-element normalized pitch class energy vector [C, C#, D, D#, E, F, F#, G, G#, A, A#, B].
+        pcm_samples: Optional raw mono PCM audio buffer (e.g. 2048 or 4096 samples).
+        sample_rate: Sample rate in Hz (default 22050).
+        
+    Returns:
+        dict: Conforming to LiveChordDetectionResult schema:
+            - chord: str (e.g. "Cmaj7", "Am", "G7", or "N" when silence/unrecognized)
+            - root: str (e.g. "C", "A", "G")
+            - quality: str (e.g. "maj7", "minor", "dom7")
+            - confidence: float in [0.0, 1.0]
+            - voicing: Optional[ChordDiagram] matching the detected chord
+            - notes_detected: list[str] (e.g. ["C", "E", "G", "B"])
+            - timestamp_ms: int
     """
 ```
 
@@ -437,6 +557,174 @@ Exports the job's primary `tablature` or a specific `ArrangementVariation` (`arr
 
 ---
 
+### 4.8 `GET /api/v1/tuner/presets` — Retrieve Guitar Tuning Presets & Target Frequencies (Phase 5)
+
+Returns the 5 canonical guitar tuning presets (`standard`, `drop_d`, `half_step_down`, `open_g`, `dadgad`) along with the exact physical target frequencies (in Hz) and MIDI note values for all 6 guitar strings.
+
+- **Method:** `GET`
+- **URL:** `http://localhost:8000/api/v1/tuner/presets`
+- **Query Parameters:**
+  - `reference_a4_hz` (*optional*, float, default `440.0`, range `415.0` to `466.0`): Reference pitch for note A4.
+- **Response (`200 OK`):** `List[TuningPreset]`
+
+#### Example Response (`200 OK`):
+```json
+[
+  {
+    "id": "standard",
+    "name": "Standard (E A D G B E)",
+    "description": "Standard guitar tuning (E2 A2 D3 G3 B3 E4)",
+    "reference_a4_hz": 440.0,
+    "strings": [
+      { "string": 6, "note": "E2", "frequency_hz": 82.41, "midi": 40 },
+      { "string": 5, "note": "A2", "frequency_hz": 110.00, "midi": 45 },
+      { "string": 4, "note": "D3", "frequency_hz": 146.83, "midi": 50 },
+      { "string": 3, "note": "G3", "frequency_hz": 196.00, "midi": 55 },
+      { "string": 2, "note": "B3", "frequency_hz": 246.94, "midi": 59 },
+      { "string": 1, "note": "E4", "frequency_hz": 329.63, "midi": 64 }
+    ]
+  },
+  {
+    "id": "drop_d",
+    "name": "Drop D (D A D G B E)",
+    "description": "Drop D tuning with string 6 lowered a whole step to D2",
+    "reference_a4_hz": 440.0,
+    "strings": [
+      { "string": 6, "note": "D2", "frequency_hz": 73.42, "midi": 38 },
+      { "string": 5, "note": "A2", "frequency_hz": 110.00, "midi": 45 },
+      { "string": 4, "note": "D3", "frequency_hz": 146.83, "midi": 50 },
+      { "string": 3, "note": "G3", "frequency_hz": 196.00, "midi": 55 },
+      { "string": 2, "note": "B3", "frequency_hz": 246.94, "midi": 59 },
+      { "string": 1, "note": "E4", "frequency_hz": 329.63, "midi": 64 }
+    ]
+  },
+  {
+    "id": "half_step_down",
+    "name": "Half Step Down (Eb Ab Db Gb Bb Eb)",
+    "description": "All 6 strings tuned down one semitone",
+    "reference_a4_hz": 440.0,
+    "strings": [
+      { "string": 6, "note": "Eb2", "frequency_hz": 77.78, "midi": 39 },
+      { "string": 5, "note": "Ab2", "frequency_hz": 103.83, "midi": 44 },
+      { "string": 4, "note": "Db3", "frequency_hz": 138.59, "midi": 49 },
+      { "string": 3, "note": "Gb3", "frequency_hz": 185.00, "midi": 54 },
+      { "string": 2, "note": "Bb3", "frequency_hz": 233.08, "midi": 58 },
+      { "string": 1, "note": "Eb4", "frequency_hz": 311.13, "midi": 63 }
+    ]
+  },
+  {
+    "id": "open_g",
+    "name": "Open G (D G D G B D)",
+    "description": "Open G chord tuning popular in blues and slide guitar",
+    "reference_a4_hz": 440.0,
+    "strings": [
+      { "string": 6, "note": "D2", "frequency_hz": 73.42, "midi": 38 },
+      { "string": 5, "note": "G2", "frequency_hz": 98.00, "midi": 43 },
+      { "string": 4, "note": "D3", "frequency_hz": 146.83, "midi": 50 },
+      { "string": 3, "note": "G3", "frequency_hz": 196.00, "midi": 55 },
+      { "string": 2, "note": "B3", "frequency_hz": 246.94, "midi": 59 },
+      { "string": 1, "note": "D4", "frequency_hz": 293.66, "midi": 62 }
+    ]
+  },
+  {
+    "id": "dadgad",
+    "name": "DADGAD (D A D G A D)",
+    "description": "Celtic / folk modal open tuning",
+    "reference_a4_hz": 440.0,
+    "strings": [
+      { "string": 6, "note": "D2", "frequency_hz": 73.42, "midi": 38 },
+      { "string": 5, "note": "A2", "frequency_hz": 110.00, "midi": 45 },
+      { "string": 4, "note": "D3", "frequency_hz": 146.83, "midi": 50 },
+      { "string": 3, "note": "G3", "frequency_hz": 196.00, "midi": 55 },
+      { "string": 2, "note": "A3", "frequency_hz": 220.00, "midi": 57 },
+      { "string": 1, "note": "D4", "frequency_hz": 293.66, "midi": 62 }
+    ]
+  }
+]
+```
+
+---
+
+### 4.9 `POST /api/v1/live/detect-chord` — Single Frame Real-Time Chord Detection (Phase 5)
+
+Evaluates a single audio frame or client-computed chromagram pitch vector, returning the detected chord and its 6-string SVG voicing diagram. Used for stateless HTTP chord identification or fallback when WebSockets are unavailable.
+
+- **Method:** `POST`
+- **URL:** `http://localhost:8000/api/v1/live/detect-chord`
+- **Content-Type:** `application/json`
+- **Request Schema:** `LiveChordFrameRequest`
+- **Response (`200 OK`):** `LiveChordDetectionResult`
+
+#### Example Request Body (with 12-bin Chroma vector):
+```json
+{
+  "chroma": [0.95, 0.05, 0.1, 0.05, 0.88, 0.08, 0.02, 0.91, 0.04, 0.05, 0.06, 0.82],
+  "sample_rate": 22050,
+  "tuning_preset": "standard"
+}
+```
+
+#### Example Response (`200 OK`):
+```json
+{
+  "chord": "Cmaj7",
+  "root": "C",
+  "quality": "maj7",
+  "confidence": 0.92,
+  "voicing": {
+    "chord": "Cmaj7",
+    "frets": [-1, 3, 2, 0, 0, 0],
+    "fingers": [0, 3, 2, 0, 0, 0],
+    "base_fret": 1
+  },
+  "notes_detected": ["C", "E", "G", "B"],
+  "timestamp_ms": 1731310000000
+}
+```
+
+---
+
+### 4.10 `WS /ws/live-chord` — Real-Time Live Microphone Chord Jamming WebSocket (Phase 5)
+
+High-performance, bidirectional WebSocket channel designed for ultra-low-latency (< 50ms) live chord recognition while jamming with an acoustic or electric guitar.
+
+- **Protocol:** `WebSocket` (`WS`)
+- **URL:** `ws://localhost:8000/ws/live-chord`
+- **Client Frame Schema:** `LiveChordFrameRequest` or Heartbeat `{ "type": "ping" }`
+- **Server Push Frame Schema:** `LiveChordDetectionResult` or Heartbeat `{ "type": "pong" }`
+- **Frame Frequency:** Recommended `10` Hz to `20` Hz (every 50ms to 100ms)
+
+#### Connection Flow & Protocol:
+1. Client establishes connection to `ws://localhost:8000/ws/live-chord`.
+2. Client's Web Audio API extracts a 12-bin chromagram pitch energy vector every 80–100ms (or captures downsampled mono PCM samples) and transmits JSON:
+   ```json
+   {
+     "chroma": [0.05, 0.02, 0.08, 0.03, 0.92, 0.04, 0.01, 0.89, 0.02, 0.03, 0.88, 0.05],
+     "tuning_preset": "standard"
+   }
+   ```
+3. Server invokes `detect_live_chord_from_frame(...)` in `services/audio-engine` and immediately responds with `LiveChordDetectionResult`:
+   ```json
+   {
+     "chord": "Em",
+     "root": "E",
+     "quality": "minor",
+     "confidence": 0.94,
+     "voicing": {
+       "chord": "Em",
+       "frets": [0, 2, 2, 0, 0, 0],
+       "fingers": [0, 2, 3, 0, 0, 0],
+       "base_fret": 1
+     },
+     "notes_detected": ["E", "G", "B"],
+     "timestamp_ms": 1731310000085
+   }
+   ```
+4. If silence or non-musical noise is detected, server responds with `chord: "N"` (No chord), `root: ""`, `quality: ""`, `confidence: 0.0`, `voicing: null`, and `notes_detected: []`.
+5. Keepalive: Client sends `{ "type": "ping" }`, server replies with `{ "type": "pong" }`.
+
+---
+
 ## 5. Standard Error Envelope
 
 All API errors follow a structured error envelope (`ErrorEnvelope` in `packages/shared-types`):
@@ -459,9 +747,12 @@ All API errors follow a structured error envelope (`ErrorEnvelope` in `packages/
 | `400 Bad Request` | `INVALID_AUDIO_FORMAT` | Unsupported audio extension or MIME type |
 | `400 Bad Request` | `UNSUPPORTED_EXPORT_FORMAT` | Unsupported or invalid export format parameter |
 | `400 Bad Request` | `INVALID_ARRANGEMENT_REQUEST` | Invalid style, difficulty, capo, or tempo_scale parameter |
+| `400 Bad Request` | `INVALID_TUNING_PRESET` | Unknown tuning preset ID (must be standard, drop_d, half_step_down, open_g, or dadgad) |
+| `400 Bad Request` | `INVALID_LIVE_CHORD_FRAME` | Live chord frame missing both chroma and pcm_samples or malformed |
 | `404 Not Found` | `JOB_NOT_FOUND` | Requested `job_id` was not found in store |
 | `404 Not Found` | `ARRANGEMENT_NOT_FOUND` | Requested `arrangement_id` was not found on the specified job |
 | `413 Payload Too Large` | `FILE_TOO_LARGE` | Uploaded file exceeds 25MB limit |
 | `422 Unprocessable Entity` | `VALIDATION_ERROR` | Invalid schema validation failure or parameter range violation |
 | `500 Internal Server Error` | `INTERNAL_ERROR` | Unexpected server processing failure |
 | `500 Internal Server Error` | `PIPELINE_ERROR` | Pipeline execution failure during audio processing |
+
