@@ -1,6 +1,6 @@
-# Arpegia Monorepo — Agent Rules & Directory Jail Specification (Phase 4)
+# Arpegia Monorepo — Agent Rules & Directory Jail Specification (Phase 5)
 
-This document defines the strict directory boundaries, read-only contract guarantees, and operational constraints for parallel autonomous agents working on **Arpegia Phase 4 (Real-Time Async Pipeline Progress Streaming: Separating Stems -> Detecting Key & Chords -> Transcribing Guitar Tab -> Generating AI Arrangement -> Completed)**.
+This document defines the strict directory boundaries, read-only contract guarantees, and operational constraints for parallel autonomous agents working on **Arpegia Phase 5 (Live Microphone Guitar Tuner & Real-Time Mic Chord Detector with Distraction-Free UX)**.
 
 ---
 
@@ -14,36 +14,39 @@ During Gate 2 parallel execution, each specialized agent is strictly confined to
 | **API Agent** | `apps/api/` | `apps/web/`, `services/audio-engine/`, `packages/`, `docs/`, `infrastructure/`, root files |
 | **Audio Engine Agent** | `services/audio-engine/` | `apps/web/`, `apps/api/`, `packages/`, `docs/`, `infrastructure/`, root files |
 
-### Specific Agent Responsibilities within Jails (Phase 4)
+### Specific Agent Responsibilities within Jails (Phase 5)
 
 - **Web Agent (`apps/web/`):**
-  - Maintain all Phase 1, Phase 2, and Phase 3 UI capabilities (`ChordVoicingDiagram`, `TablatureViewer`, `InteractiveTabEditor`, `ArrangementGenerator`, `MultiFormatExport`).
-  - Implement real-time pipeline progress streaming UI via WebSocket (`ws://localhost:8000/ws/analyze/{job_id}`) with automatic fallback to HTTP polling (`GET /api/v1/analyze/{job_id}/progress`) using `ARPEGIA_ASYNC_POLL_INTERVAL_MS` (default `800` ms).
-  - Add `async_mode=true` query parameter support to `POST /api/v1/analyze?async_mode=true` upon audio upload, immediately switching to the progress streaming view upon receiving `202 Accepted` / `200 OK` with the initial `JobProgressEvent` / `job_id`.
-  - Render the 5 ordered pipeline stages with animated progress indicators, overall percentage bar (`0%` -> `100%`), step status badges (`pending`, `in_progress`, `completed`, `skipped`, `failed`), and dynamic step details (`detail`).
-  - Gracefully transition into completed analysis state upon receiving `job.completed` with the full `result: AnalysisResponse`, or display structured error banner on `job.failed`.
-  - Consume physical contracts from `packages/shared-types/index.ts` (or mirror into `apps/web/src/types/index.ts` in strict alignment).
+  - Maintain all Phase 1–4 capabilities (`ChordVoicingDiagram`, `TablatureViewer`, `InteractiveTabEditor`, `ArrangementGenerator`, `MultiFormatExport`, and real-time async pipeline progress streaming).
+  - Implement the **Live Microphone Guitar Tuner UI**:
+    * Web Audio API integration (`AudioContext`, `MediaStreamAudioSourceNode`, `AnalyserNode`, or AudioWorklet for pitch detection via YIN/autocorrelation).
+    * Precision pitch deviation meter / needle gauge (`-50.0` to `+50.0` cents), target frequency display, detected note badge, and tuning status badge (`in_tune` when `|cents_deviation| <= 3.5`, `flat`, or `sharp`).
+    * 6-string visual selector (strings 1 to 6) with auto-detect string mode and manual string override.
+    * Preset switcher supporting all 5 canonical tunings: `standard`, `drop_d`, `half_step_down`, `open_g`, and `dadgad` (fetching definitions from `GET /api/v1/tuner/presets` or using client-side cache).
+  - Implement the **Real-Time Mic Chord Detector & Distraction-Free UX**:
+    * Live microphone capture streaming 12-bin chroma energy vectors or PCM audio frames via WebSocket (`WS /ws/live-chord`) with automatic HTTP fallback (`POST /api/v1/live/detect-chord`).
+    * Distraction-free live jamming HUD mode: full-screen high-contrast display of detected chord (e.g., `Cmaj7`, `Am`), root, quality, confidence meter, detected notes list, and real-time 6-string SVG `ChordDiagram` voicing.
+    * Resilient WebSocket connection management (automatic reconnection with backoff, heartbeat `{ "type": "ping" }` support, and offline graceful degradation).
+  - Consume physical contracts strictly from `packages/shared-types/index.ts` (or mirror into `apps/web/src/types/index.ts` in 100% alignment).
 
 - **API Agent (`apps/api/`):**
-  - Maintain 100% backward compatibility for synchronous `POST /api/v1/analyze` (`async_mode=false` or omitted), executing the pipeline and returning `200 OK` with complete `AnalysisResponse`.
-  - Implement async analysis mode `POST /api/v1/analyze?async_mode=true`, returning `202 Accepted` (or `200 OK`) with initial `JobProgressEvent` / `job_id` and launching background execution.
-  - Implement HTTP polling endpoint `GET /api/v1/analyze/{job_id}/progress`, returning the latest `JobProgressEvent` snapshot.
-  - Implement WebSocket endpoint `WS /ws/analyze/{job_id}` on Port `8000`, pushing real-time `JobProgressEvent` frames whenever the progress callback fires, closing cleanly on `job.completed` or `job.failed`.
-  - Wire `services/audio-engine`'s `run_pipeline(..., progress_callback=...)` to update job progress state and broadcast events to connected WebSocket clients and polling cache.
-  - Mirror/import Pydantic v2 contracts from `packages/shared-types/schemas.py` into `apps/api/app/schemas/analysis.py`.
+  - Maintain all Phase 1–4 endpoints (`POST /api/v1/analyze`, `GET /api/v1/analyze/{job_id}/progress`, `WS /ws/analyze/{job_id}`, `PUT /api/v1/analyze/{job_id}/tablature`, `POST /api/v1/analyze/{job_id}/arrange`, `GET /api/v1/analyze/{job_id}/export`).
+  - Implement `GET /api/v1/tuner/presets`:
+    * Returns `200 OK` with `List[TuningPreset]` (`standard`, `drop_d`, `half_step_down`, `open_g`, `dadgad`) and exact target frequencies in Hz.
+  - Implement `POST /api/v1/live/detect-chord`:
+    * Accepts `LiveChordFrameRequest` (12-bin `chroma` vector or `pcm_samples` buffer) and returns `200 OK` with `LiveChordDetectionResult` including the matching `ChordDiagram`.
+  - Implement `WS /ws/live-chord`:
+    * Real-time WebSocket endpoint on Port `8000` accepting JSON frames matching `LiveChordFrameRequest` (or `{ "type": "ping" }`) and streaming back `LiveChordDetectionResult` in real time for low-latency mic jamming.
+  - Wire request handlers to call `services/audio-engine`'s `live_detector` helper functions (`get_tuning_presets()`, `evaluate_tuner_pitch()`, `detect_live_chord_from_frame()`).
+  - Mirror/import Pydantic v2 contracts from `packages/shared-types/schemas.py` into `apps/api/app/schemas/`.
 
 - **Audio Engine Agent (`services/audio-engine/`):**
-  - Maintain Phase 1, Phase 2, and Phase 3 audio signal processing (Librosa), chord diagram resolution (`ChordDiagram`), biomechanical fretboard tab generation (`TablatureData`), style arrangement synthesis (`ArrangementVariation`), and multi-format exporters (`midi`, `musicxml`, `ascii`, `pdf`).
-  - Extend `run_pipeline` in `engine/orchestrator.py` to accept the canonical progress callback signature:
-    `run_pipeline(audio_path: str, filename: str = "upload.mp3", progress_callback: Optional[Callable[[str, int, str, Optional[str]], None]] = None) -> dict`
-    where the callback receives `(stage: str, progress_percent: int, message: str, detail: Optional[str])`.
-  - Implement progress milestone emissions across the 5 canonical pipeline stages:
-    1. `separating_stems` (0% -> 25%): Demucs 4-stem source separation (or fast-skip if disabled).
-    2. `detecting_key_tempo` (25% -> 40%): Audio loading, BPM, and Krumhansl-Schmuckler key detection.
-    3. `detecting_chords` (40% -> 60%): Chromagram chord recognition, voicings & style improvisations.
-    4. `transcribing_tablature` (60% -> 85%): Basic Pitch polyphonic extraction & Viterbi fretboard mapping.
-    5. `generating_arrangement` (85% -> 100%): Polyphonic Fingerstyle arrangement & final output validation.
-  - Ensure the pipeline operates 100% offline/deterministically without external API dependencies.
+  - Maintain Phase 1–4 DSP, Demucs separation, Basic Pitch transcription, Viterbi fretboard mapping, polyphonic Fingerstyle arrangement synthesis, and multi-format exporters.
+  - Implement Phase 5 live detection module in `services/audio-engine/engine/live_detector.py`:
+    * `get_tuning_presets(reference_a4_hz: float = 440.0) -> list[dict]`: returns presets for standard, drop_d, half_step_down, open_g, dadgad with 6 string targets each (ordered string 6 Low to string 1 High) with note, frequency_hz, and midi.
+    * `evaluate_tuner_pitch(frequency_hz: float, preset_id: str = "standard", target_string: Optional[int] = None) -> dict`: evaluates pitch against preset targets, computing cents deviation `1200 * log2(f / target_f)`, status (`in_tune` when `abs(cents) <= 3.5`, `flat`, `sharp`), confidence, and closest string.
+    * `detect_live_chord_from_frame(chroma: Optional[list[float]] = None, pcm_samples: Optional[list[float]] = None, sample_rate: int = 22050) -> dict`: identifies chord from 12-bin chroma vector or PCM audio window using chord templates / chromagram, returning chord symbol, root, quality, confidence, notes detected, and matching `ChordDiagram`.
+  - Ensure 100% offline, deterministic, sub-50ms execution.
 
 ---
 
@@ -77,7 +80,7 @@ All agents and services must adhere to the following port assignments:
 | Service | Directory | Port | Base URL / Endpoint |
 | :--- | :--- | :--- | :--- |
 | **Web Frontend (Next.js)** | `apps/web/` | `3000` | `http://localhost:3000` |
-| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000` (`/api/v1/analyze`, `/ws/analyze/{job_id}`) |
+| **Backend API Gateway (FastAPI)** | `apps/api/` | `8000` | `http://localhost:8000`<br>`/api/v1/tuner/presets`<br>`/api/v1/live/detect-chord`<br>`ws://localhost:8000/ws/live-chord`<br>`/api/v1/analyze`<br>`ws://localhost:8000/ws/analyze/{job_id}` |
 | **Audio Engine (Library / Worker)** | `services/audio-engine/` | N/A (In-process / Worker) | Invoked by `apps/api` or CLI |
 
 ---
