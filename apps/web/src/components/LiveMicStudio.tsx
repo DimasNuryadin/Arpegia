@@ -98,48 +98,48 @@ export function LiveMicStudio({ mockMode }: LiveMicStudioProps) {
   return (
     <div className="w-full space-y-6 animate-in fade-in duration-300">
       {/* Workspace Header: Sub-Tab 2-Pill Switcher & Microphone Status Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-md shadow-xl">
-        {/* 2-Tab Pill Switcher */}
-        <div className="inline-flex p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 p-4 sm:p-5 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-md shadow-xl">
+        {/* 2-Tab Pill Switcher (Full-width segmented control on mobile) */}
+        <div className="grid grid-cols-2 sm:inline-flex p-1 rounded-xl bg-slate-950/80 border border-slate-800 w-full sm:w-auto gap-1">
           <button
             type="button"
             onClick={() => setActiveSubTab("tuner")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+            className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer text-center ${
               activeSubTab === "tuner"
                 ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
                 : "text-slate-400 hover:text-white"
             }`}
           >
-            <Crosshair className="w-3.5 h-3.5" />
-            <span>🎯 Guitar Tuner</span>
+            <Crosshair className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">🎯 Tuner</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveSubTab("chord")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+            className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer text-center ${
               activeSubTab === "chord"
                 ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
                 : "text-slate-400 hover:text-white"
             }`}
           >
-            <Music2 className="w-3.5 h-3.5" />
-            <span>🎸 Live Chord Detector</span>
+            <Music2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">🎸 Chord Jam</span>
           </button>
         </div>
 
         {/* Global Live Mic Controls & Indicator */}
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-slate-400">
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
+          <div className="flex items-center gap-1.5 text-xs font-mono text-slate-400">
             <span
               className={`w-2 h-2 rounded-full ${
                 isMicActive ? "bg-emerald-400 animate-ping" : "bg-slate-600"
               }`}
             />
-            <span>
+            <span className="text-[11px] sm:text-xs">
               {isMicActive
-                ? `Mic Active (${micManager.getSampleRate()} Hz)`
-                : "Microphone Paused"}
+                ? `Mic Active`
+                : "Mic Paused"}
             </span>
           </div>
 
@@ -155,7 +155,7 @@ export function LiveMicStudio({ mockMode }: LiveMicStudioProps) {
             {isMicActive ? (
               <>
                 <MicOff className="w-3.5 h-3.5" />
-                <span>Mute Mic</span>
+                <span>Mute</span>
               </>
             ) : (
               <>

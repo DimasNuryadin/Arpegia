@@ -107,15 +107,15 @@ export function ExportHubBar({
         </div>
 
         {/* Quick Dropdown + Export CTA */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <select
             aria-label="Select Export Format"
             value={selectedFormat}
             onChange={(e) => setSelectedFormat(e.target.value as ExportFormat)}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500 cursor-pointer"
+            className="flex-1 sm:flex-initial bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500 cursor-pointer"
           >
             <option value="midi">MIDI Sequence (.mid)</option>
-            <option value="musicxml">MusicXML / GuitarPro (.musicxml)</option>
+            <option value="musicxml">MusicXML (.musicxml)</option>
             <option value="pdf">Printable Score (.pdf)</option>
             <option value="ascii">ASCII Tablature (.txt)</option>
           </select>
@@ -124,7 +124,7 @@ export function ExportHubBar({
             type="button"
             disabled={exportingFormat !== null}
             onClick={() => handleTriggerExport(selectedFormat)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-mono font-bold bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 shadow-md shadow-amber-500/20 cursor-pointer disabled:opacity-50"
+            className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-mono font-bold bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 shadow-md shadow-amber-500/20 cursor-pointer disabled:opacity-50 whitespace-nowrap"
           >
             {exportingFormat === selectedFormat ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -132,7 +132,7 @@ export function ExportHubBar({
               <Download className="w-3.5 h-3.5" />
             )}
             <span>
-              Export {getExportFormatSpec(selectedFormat).label.split(" ")[0]}
+              Export
             </span>
           </button>
         </div>

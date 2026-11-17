@@ -73,9 +73,9 @@ export function ImprovisationPanel({
   };
 
   return (
-    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-md shadow-2xl space-y-5">
+    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-2xl space-y-5">
       {/* Panel Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
         <div>
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-400" />
@@ -93,7 +93,7 @@ export function ImprovisationPanel({
         {activeChord && (
           <button
             onClick={() => setFilterActiveOnly(!filterActiveOnly)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded-lg border transition-all ${
+            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded-lg border transition-all cursor-pointer ${
               filterActiveOnly
                 ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
                 : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200"
@@ -108,17 +108,17 @@ export function ImprovisationPanel({
         )}
       </div>
 
-      {/* Style Tabs */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Style Tabs - Swipeable on mobile */}
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 touch-pan-x w-full">
         {STYLES.map((style) => {
           const isSelected = selectedStyle === style.key;
           return (
             <button
               key={style.key}
               onClick={() => setSelectedStyle(style.key)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-xl border transition-all duration-200 ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-xl border whitespace-nowrap transition-all duration-200 flex-shrink-0 cursor-pointer ${
                 isSelected
-                  ? "bg-slate-800 text-white border-amber-500/60 shadow-lg shadow-amber-500/10"
+                  ? "bg-slate-800 text-white border-amber-500/60 shadow-lg shadow-amber-500/10 font-bold"
                   : "bg-slate-950/60 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200"
               }`}
             >

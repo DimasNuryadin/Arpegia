@@ -422,31 +422,31 @@ export function TablatureViewer({
       </div>
 
       {/* Polyphonic Voice Legend, Filter Pill Bar & Articulation Status */}
-      <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-slate-400 bg-slate-950/60 border border-slate-800/80 rounded-xl px-3.5 py-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-slate-300 font-semibold">
-            Polyphonic Voices (Click to Solo):
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-[11px] font-mono text-slate-400 bg-slate-950/60 border border-slate-800/80 rounded-xl px-3 sm:px-3.5 py-2.5">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 touch-pan-x w-full sm:w-auto">
+          <span className="text-slate-300 font-semibold whitespace-nowrap hidden xs:inline">
+            Voices:
           </span>
           {(
             [
               {
                 mode: "all" as VoiceFilterMode,
-                label: "All Voices",
+                label: "All",
                 style: "bg-slate-800 text-slate-200 border-slate-700",
               },
               {
                 mode: "bass" as VoiceFilterMode,
-                label: "Bass (Thumb S4–6)",
+                label: "Bass (S4–6)",
                 style: "bg-amber-500/15 text-amber-300 border-amber-500/40",
               },
               {
                 mode: "melody" as VoiceFilterMode,
-                label: "Melody (Lead S1–3)",
+                label: "Melody (S1–3)",
                 style: "bg-sky-500/15 text-sky-300 border-sky-500/40",
               },
               {
                 mode: "harmony" as VoiceFilterMode,
-                label: "Harmony (Inner)",
+                label: "Harmony",
                 style: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
               },
               {
@@ -462,7 +462,7 @@ export function TablatureViewer({
                 key={v.mode}
                 type="button"
                 onClick={() => handleVoiceFilterChange(v.mode)}
-                className={`px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                className={`px-2.5 py-1 rounded-md border whitespace-nowrap transition-all cursor-pointer flex-shrink-0 ${
                   active
                     ? `${v.style} ring-1 ring-amber-400 font-bold`
                     : `${v.style} opacity-75 hover:opacity-100`
@@ -474,7 +474,7 @@ export function TablatureViewer({
           })}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
           <span className="hidden md:inline-flex items-center gap-2 text-[10px]">
             <span>Articulations:</span>
             <span className="px-1 rounded bg-emerald-500/20 text-emerald-300">
@@ -486,7 +486,7 @@ export function TablatureViewer({
             </span>
             <span className="px-1 rounded bg-rose-500/20 text-rose-300">b</span>
           </span>
-          <span className="text-amber-400">
+          <span className="text-amber-400 font-semibold">
             Playhead: <strong>{activeTime.toFixed(2)}s</strong>
           </span>
           <button
@@ -494,15 +494,22 @@ export function TablatureViewer({
             onClick={() => setShowInlineAscii(!showInlineAscii)}
             className="text-indigo-300 hover:underline cursor-pointer"
           >
-            {showInlineAscii ? "Hide Inline ASCII" : "Show Inline ASCII"}
+            {showInlineAscii ? "Hide ASCII" : "Show ASCII"}
           </button>
         </div>
+      </div>
+
+      {/* Mobile Swipe Guidance Banner */}
+      <div className="sm:hidden text-center">
+        <span className="inline-block text-[10px] font-mono text-amber-400/90 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+          👈 Swipe tab staff horizontally • Tap note to edit 👉
+        </span>
       </div>
 
       {/* Horizontal Measure-Based 6-String Tablature Staff */}
       <div
         ref={staffScrollRef}
-        className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-[#07090e] p-4 select-none"
+        className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-[#07090e] p-3 sm:p-4 select-none touch-pan-x"
       >
         <div className="inline-flex min-w-full">
           {/* Sticky Left Column: 6-String Tuning Labels (E4, B3, G3, D3, A2, E2) */}

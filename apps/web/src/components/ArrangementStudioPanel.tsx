@@ -131,7 +131,7 @@ export function ArrangementStudioPanel({
 
   return (
     <div
-      className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-md shadow-2xl space-y-5"
+      className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-2xl space-y-5"
       aria-label="AI Guitar Arrangement Studio Panel"
     >
       {/* Studio Header */}
@@ -351,7 +351,7 @@ export function ArrangementStudioPanel({
               type="button"
               onClick={handleGenerate}
               disabled={isGenerating}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-500 hover:from-amber-400 hover:via-rose-400 hover:to-indigo-400 text-white shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-60"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-mono font-bold bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-500 hover:from-amber-400 hover:via-rose-400 hover:to-indigo-400 text-white shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-60 w-full sm:w-auto"
             >
               {isGenerating ? (
                 <>

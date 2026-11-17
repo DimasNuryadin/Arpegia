@@ -250,15 +250,15 @@ export function LiveChordDetector({
   return (
     <div className="w-full space-y-6">
       {/* Top Header Bar: Status & Transport Mode */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-xl flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-gradient-to-tr from-amber-500/20 to-indigo-500/20 text-amber-400 border border-amber-500/30">
+          <div className="p-2 rounded-xl bg-gradient-to-tr from-amber-500/20 to-indigo-500/20 text-amber-400 border border-amber-500/30 flex-shrink-0">
             <Music className="w-5 h-5" />
           </div>
           <div>
             <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
               <span>Live Microphone Chord Recognition</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hidden xs:inline">
                 Phase 5
               </span>
             </h2>
@@ -268,7 +268,7 @@ export function LiveChordDetector({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
           {/* Transport Badge */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-xs font-mono">
             <Radio
@@ -482,7 +482,7 @@ export function LiveChordDetector({
         </div>
 
         {/* Progression Horizontal Flow */}
-        <div className="flex items-center gap-2.5 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-700">
+        <div className="flex items-center gap-2.5 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-700 touch-pan-x">
           {rollingProgression.length === 0 ? (
             <p className="text-xs font-mono text-slate-500 py-2">
               No chords in history yet. Strum your guitar or click the demo buttons above!

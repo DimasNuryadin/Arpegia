@@ -365,7 +365,7 @@ export default function Home() {
       />
 
       {/* Main Studio Workspace */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5 sm:space-y-6">
         {/* Status / Feedback Banner */}
         {statusNotice && (
           <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-mono text-amber-200">
@@ -545,26 +545,26 @@ export default function Home() {
       </main>
 
       {/* Studio Footer */}
-      <footer className="border-t border-slate-800/80 bg-slate-950/60 py-4 mt-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-500">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Arpegia Platform • Phase 5 Live Mic Studio & Studio Analysis</span>
-            <span className="text-slate-700">|</span>
-            <span>
-              60fps Edge Autocorrelation Tuner • WS Live Chord Jam • 5-Stage Neural Pipeline
+      <footer className="border-t border-slate-800/80 bg-slate-950/60 py-4 mt-8 pb-safe">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-mono text-slate-500 text-center sm:text-left">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+            <span>Arpegia Platform • AI Guitar Platform</span>
+            <span className="text-slate-700 hidden sm:inline">|</span>
+            <span className="hidden md:inline">
+              60fps Edge Autocorrelation Tuner • WS Live Chord Jam
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
             <span>
-              API Target:{" "}
+              API:{" "}
               <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
                 {api.getHttpBaseUrl()}
               </code>
             </span>
             <span>
-              WS Target:{" "}
+              WS:{" "}
               <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
                 {api.getWsBaseUrl()}/ws/live-chord
               </code>

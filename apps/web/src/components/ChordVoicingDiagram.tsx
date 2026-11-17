@@ -94,7 +94,7 @@ export function ChordVoicingDiagram({
   const fretSpacing = (gridBottom - gridTop) / numFrets; // 32px
 
   return (
-    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-md shadow-2xl space-y-4">
+    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-2xl space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
         <div className="flex items-center gap-2">

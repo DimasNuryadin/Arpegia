@@ -147,7 +147,7 @@ export function AudioUpload({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={openFileDialog}
-        className={`relative group cursor-pointer overflow-hidden rounded-2xl border-2 border-dashed p-8 transition-all duration-300 ${
+        className={`relative group cursor-pointer overflow-hidden rounded-2xl border-2 border-dashed p-5 sm:p-8 transition-all duration-300 ${
           isDragOver
             ? "border-amber-400 bg-amber-500/10 scale-[1.008]"
             : uploadState.isUploading

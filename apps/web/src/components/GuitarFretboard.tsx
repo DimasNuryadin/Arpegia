@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import { GUITAR_CHORD_VOICINGS } from "../lib/mock-data";
 import { Guitar, Volume2 } from "lucide-react";
 import { guitarSynth } from "../lib/synth";
@@ -15,6 +15,7 @@ const SINGLE_DOT_FRETS = [3, 5, 7, 9];
 const DOUBLE_DOT_FRETS = [12];
 
 export function GuitarFretboard({ chordName }: GuitarFretboardProps) {
+  const fretScrollRef = useRef<HTMLDivElement>(null);
   const voicing = useMemo(() => {
     // Exact match or fallback by base chord name
     if (GUITAR_CHORD_VOICINGS[chordName]) {
@@ -38,8 +39,12 @@ export function GuitarFretboard({ chordName }: GuitarFretboardProps) {
     guitarSynth.playChord(chordName, 2.0);
   };
 
+  const scrollToFretZone = (pixels: number) => {
+    fretScrollRef.current?.scrollTo({ left: pixels, behavior: "smooth" });
+  };
+
   return (
-    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-md shadow-2xl space-y-4">
+    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-2xl space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
         <div className="flex items-center gap-2">
@@ -56,7 +61,7 @@ export function GuitarFretboard({ chordName }: GuitarFretboardProps) {
           <button
             onClick={handlePlayVoicing}
             title="Strum this voicing"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-mono font-medium rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-mono font-medium rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
           >
             <Volume2 className="w-3.5 h-3.5" />
             <span>Strum</span>
@@ -64,12 +69,50 @@ export function GuitarFretboard({ chordName }: GuitarFretboardProps) {
         </div>
       </div>
 
-      <p className="text-xs text-slate-400 font-mono">
-        {voicing.description || `Fretboard placement for ${voicing.chord}`}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-400">
+        <p className="truncate max-w-sm">
+          {voicing.description || `Fretboard placement for ${voicing.chord}`}
+        </p>
+
+        {/* Mobile Fret Zone Quick-Jump Buttons */}
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-slate-500 hidden xs:inline">Jump:</span>
+          <button
+            type="button"
+            onClick={() => scrollToFretZone(0)}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+          >
+            Nut (0–4)
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollToFretZone(220)}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+          >
+            Frets 5–8
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollToFretZone(440)}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+          >
+            Frets 9–12
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Swipe Hint */}
+      <div className="sm:hidden text-center">
+        <span className="inline-block text-[10px] font-mono text-amber-400/90 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+          👈 Swipe fretboard to explore 12 frets 👉
+        </span>
+      </div>
 
       {/* Horizontal Fretboard Container */}
-      <div className="overflow-x-auto py-2">
+      <div
+        ref={fretScrollRef}
+        className="overflow-x-auto py-2 touch-pan-x"
+      >
         <div className="min-w-[620px] bg-stone-950/80 border border-stone-800 rounded-xl p-4 shadow-inner relative select-none">
           {/* Nut line */}
           <div className="absolute top-10 bottom-6 left-12 w-1.5 bg-stone-200 rounded-sm shadow-md" />

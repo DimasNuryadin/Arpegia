@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,10 +12,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#090b10" },
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+  ],
+};
+
 export const metadata: Metadata = {
   title: "Arpegia | AI-Powered Guitar Intelligence Platform",
   description:
-    "Phase 3 AI Music Intelligence - Fingerstyle & Style Arrangement Studio, Polyphonic Voice Visualization & Multi-Format Export Hub",
+    "AI Guitar Intelligence Platform - Real-time Tuner, Live Chord Recognition, Tablature Generation, Fingerstyle Arrangement Studio & Multi-Format Export",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Arpegia",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export default function RootLayout({
@@ -28,7 +47,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#090b10] text-slate-100 selection:bg-amber-500/30 selection:text-amber-200">
+      <body className="min-h-full flex flex-col bg-[#090b10] text-slate-100 selection:bg-amber-500/30 selection:text-amber-200 antialiased overscroll-y-none">
         {children}
       </body>
     </html>

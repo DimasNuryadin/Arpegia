@@ -62,31 +62,31 @@ export function MetadataCard({
   };
 
   return (
-    <div className="w-full bg-slate-900/70 border border-slate-800 rounded-2xl p-5 backdrop-blur-sm relative overflow-hidden shadow-xl">
+    <div className="w-full bg-slate-900/70 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-sm relative overflow-hidden shadow-xl">
       {/* Background aesthetic line */}
       <div className="absolute top-0 right-0 w-96 h-32 bg-gradient-to-bl from-amber-500/5 via-indigo-500/5 to-transparent pointer-events-none" />
 
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800/80 mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 pb-4 border-b border-slate-800/80 mb-4 sm:mb-5">
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300 font-mono">
+          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+          <h2 className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-300 font-mono">
             Song Intelligence Metadata
           </h2>
         </div>
-        <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-          <span className="truncate max-w-[200px] sm:max-w-xs text-slate-200">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs font-mono text-slate-400">
+          <span className="truncate max-w-[140px] xs:max-w-[200px] sm:max-w-xs text-slate-200">
             {metadata.filename}
           </span>
-          <span className="text-slate-600">•</span>
+          <span className="text-slate-600 hidden xs:inline">•</span>
           <span className="flex items-center gap-1 text-slate-300">
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
             {chordsCount} Chords
           </span>
-          <span className="text-slate-600">•</span>
+          <span className="text-slate-600 hidden xs:inline">•</span>
           <span className="flex items-center gap-1 text-emerald-400">
             <CheckCircle className="w-3.5 h-3.5" />
-            {(averageConfidence * 100).toFixed(0)}% AI Confidence
+            {(averageConfidence * 100).toFixed(0)}% AI Conf
           </span>
         </div>
       </div>

@@ -242,10 +242,19 @@ export function AudioPlayerTimeline({
     seekTo(currentTime + delta);
   };
 
-  // Handle clicking on timeline scrub bar
+  // Handle clicking or touch dragging on timeline scrub bar
   const handleScrubberClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+    seekTo(ratio * totalDuration);
+  };
+
+  const handleScrubberTouch = (e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = touch.clientX - rect.left;
     const ratio = Math.max(0, Math.min(1, clickX / rect.width));
     seekTo(ratio * totalDuration);
   };
@@ -288,72 +297,79 @@ export function AudioPlayerTimeline({
       )}
 
       {/* Player Top Controls Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
-        {/* Play / Skip Buttons */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => jumpTime(-5)}
-            title="Rewind 5s"
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-          >
-            <Rewind className="w-4 h-4" />
-          </button>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 pb-4 border-b border-slate-800/80">
+        {/* Play / Skip Buttons + Active Chord Display */}
+        <div className="flex items-center justify-between sm:justify-start gap-2.5 w-full sm:w-auto">
+          {/* Transport buttons */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <button
+              onClick={() => jumpTime(-5)}
+              title="Rewind 5s"
+              aria-label="Rewind 5s"
+              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+            >
+              <Rewind className="w-4 h-4" />
+            </button>
 
-          <button
-            onClick={togglePlay}
-            title={isPlaying ? "Pause (Space)" : "Play (Space)"}
-            className={`flex items-center justify-center w-12 h-12 rounded-2xl shadow-lg transition-all duration-200 ${
-              isPlaying
-                ? "bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/30 scale-105"
-                : "bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white shadow-amber-500/20"
-            }`}
-          >
-            {isPlaying ? (
-              <Pause className="w-6 h-6 fill-current" />
-            ) : (
-              <Play className="w-6 h-6 fill-current ml-0.5" />
-            )}
-          </button>
-
-          <button
-            onClick={() => jumpTime(5)}
-            title="Fast forward 5s"
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-          >
-            <FastForward className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => seekTo(0)}
-            title="Restart to beginning"
-            className="p-2 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors ml-1"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Current Active Chord Live Display */}
-        <div className="flex items-center gap-3 bg-slate-950/80 border border-slate-800/90 rounded-xl px-4 py-2 shadow-inner">
-          <div className="flex items-center gap-1.5 text-xs text-slate-400 font-mono">
-            <Flame
-              className={`w-4 h-4 ${
-                isPlaying ? "text-amber-400 animate-pulse" : "text-slate-500"
+            <button
+              onClick={togglePlay}
+              title={isPlaying ? "Pause (Space)" : "Play (Space)"}
+              aria-label={isPlaying ? "Pause" : "Play"}
+              className={`flex items-center justify-center w-11 h-11 sm:w-12 sm:h-12 rounded-2xl shadow-lg transition-all duration-200 ${
+                isPlaying
+                  ? "bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/30 scale-105"
+                  : "bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white shadow-amber-500/20"
               }`}
-            />
-            <span>Active Chord:</span>
+            >
+              {isPlaying ? (
+                <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
+              ) : (
+                <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current ml-0.5" />
+              )}
+            </button>
+
+            <button
+              onClick={() => jumpTime(5)}
+              title="Fast forward 5s"
+              aria-label="Fast forward 5s"
+              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+            >
+              <FastForward className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => seekTo(0)}
+              title="Restart to beginning"
+              aria-label="Restart track"
+              className="p-2 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors ml-0.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <span className="text-xl font-bold font-mono text-amber-400 tracking-wider">
-            {activeChord?.chord || "--"}
-          </span>
-          {activeChord && (
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              {(activeChord.confidence * 100).toFixed(0)}% conf
+
+          {/* Current Active Chord Live Display */}
+          <div className="flex items-center gap-2 sm:gap-3 bg-slate-950/80 border border-slate-800/90 rounded-xl px-2.5 py-1.5 sm:px-4 sm:py-2 shadow-inner">
+            <div className="flex items-center gap-1 text-[11px] sm:text-xs text-slate-400 font-mono">
+              <Flame
+                className={`w-3.5 h-3.5 ${
+                  isPlaying ? "text-amber-400 animate-pulse" : "text-slate-500"
+                }`}
+              />
+              <span className="hidden xs:inline">Active:</span>
+            </div>
+            <span className="text-base sm:text-xl font-bold font-mono text-amber-400 tracking-wider">
+              {activeChord?.chord || "--"}
             </span>
-          )}
+            {activeChord && (
+              <span className="text-[10px] sm:text-[11px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                {(activeChord.confidence * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Right side playback controls: Synth Sound, Speed, Volume, Follow */}
-        <div className="flex items-center gap-3">
+        {/* Secondary controls: Synth Sound, Speed, Follow, Volume, Zoom */}
+        <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
           {/* Synth Audition Toggle */}
           <button
             onClick={() => setSynthAuditionEnabled(!synthAuditionEnabled)}
@@ -362,49 +378,28 @@ export function AudioPlayerTimeline({
                 ? "Tone Synth Enabled: Click to mute guitar chord synth"
                 : "Tone Synth Muted: Click to enable guitar chord synth"
             }
-            className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+            className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
               synthAuditionEnabled
                 ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
                 : "bg-slate-800 text-slate-500 border-slate-700"
             }`}
           >
             <Volume1 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Synth Audio</span>
+            <span className="inline">Synth</span>
           </button>
-
-          {/* Timeline zoom */}
-          <div className="flex items-center bg-slate-800/80 rounded-lg p-0.5 border border-slate-700">
-            <button
-              onClick={() => setPixelsPerSecond((p) => Math.max(35, p - 15))}
-              title="Zoom out timeline"
-              className="p-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            <span className="text-[10px] font-mono px-1.5 text-slate-400">
-              {pixelsPerSecond}px/s
-            </span>
-            <button
-              onClick={() => setPixelsPerSecond((p) => Math.min(140, p + 15))}
-              title="Zoom in timeline"
-              className="p-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
-          </div>
 
           {/* Follow Playhead Toggle */}
           <button
             onClick={() => setFollowPlayhead(!followPlayhead)}
             title="Auto-scroll timeline with playhead"
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
               followPlayhead
                 ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
                 : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white"
             }`}
           >
             <Crosshair className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Follow</span>
+            <span className="hidden xs:inline">Follow</span>
           </button>
 
           {/* Playback Speed */}
@@ -424,15 +419,36 @@ export function AudioPlayerTimeline({
             <option value="1.5">1.5x</option>
           </select>
 
-          {/* Volume */}
-          <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700 rounded-lg px-2 py-1">
+          {/* Timeline zoom */}
+          <div className="flex items-center bg-slate-800/80 rounded-lg p-0.5 border border-slate-700">
+            <button
+              onClick={() => setPixelsPerSecond((p) => Math.max(35, p - 15))}
+              title="Zoom out timeline"
+              className="p-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-[10px] font-mono px-1.5 text-slate-400 hidden xs:inline">
+              {pixelsPerSecond}px/s
+            </span>
+            <button
+              onClick={() => setPixelsPerSecond((p) => Math.min(140, p + 15))}
+              title="Zoom in timeline"
+              className="p-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Volume slider on larger screens */}
+          <div className="hidden sm:flex items-center gap-1.5 bg-slate-800/80 border border-slate-700 rounded-lg px-2 py-1">
             <button
               onClick={() => {
                 const nextMute = !isMuted;
                 setIsMuted(nextMute);
                 if (audioRef.current) audioRef.current.muted = nextMute;
               }}
-              className="text-slate-400 hover:text-white"
+              className="text-slate-400 hover:text-white cursor-pointer"
             >
               {isMuted || volume === 0 ? (
                 <VolumeX className="w-3.5 h-3.5 text-rose-400" />
@@ -467,18 +483,20 @@ export function AudioPlayerTimeline({
           <span className="text-amber-400 font-bold">
             {formatTime(currentTime)}
           </span>
-          <span className="text-slate-500">
-            Click anywhere on waveform or chord blocks to jump
+          <span className="text-[11px] text-slate-500 truncate px-2">
+            Tap or drag scrubber to seek
           </span>
           <span className="text-slate-400 font-semibold">
             {formatTime(totalDuration)}
           </span>
         </div>
 
-        {/* Interactive Waveform Progress Bar */}
+        {/* Interactive Waveform Progress Bar with Touch Drag */}
         <div
           onClick={handleScrubberClick}
-          className="relative h-12 bg-slate-950 rounded-xl overflow-hidden cursor-pointer border border-slate-800 group hover:border-slate-700"
+          onTouchStart={handleScrubberTouch}
+          onTouchMove={handleScrubberTouch}
+          className="relative h-12 bg-slate-950 rounded-xl overflow-hidden cursor-pointer border border-slate-800 group hover:border-slate-700 touch-none select-none"
         >
           {/* Simulated Waveform Bars */}
           <div className="absolute inset-0 flex items-center justify-between px-2 gap-[2px] opacity-40 group-hover:opacity-60 transition-opacity pointer-events-none">
@@ -524,14 +542,19 @@ export function AudioPlayerTimeline({
             </h3>
           </div>
           <span className="text-[11px] text-slate-400 font-mono">
-            {chords.length} detected chord segments • Click any block to seek
+            <span className="hidden sm:inline">
+              {chords.length} detected chord segments • Click any block to seek
+            </span>
+            <span className="sm:hidden text-amber-400/90 flex items-center gap-1">
+              👈 Swipe timeline • Tap chord to seek 👉
+            </span>
           </span>
         </div>
 
         {/* Horizontal Scrolling Chord Timeline Container */}
         <div
           ref={timelineScrollRef}
-          className="relative w-full overflow-x-auto overflow-y-hidden rounded-xl border border-slate-800 bg-[#07090e] p-3 select-none"
+          className="relative w-full overflow-x-auto overflow-y-hidden rounded-xl border border-slate-800 bg-[#07090e] p-3 select-none touch-pan-x"
         >
           <div
             className="relative h-28"

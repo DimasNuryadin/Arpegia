@@ -205,17 +205,17 @@ export function GuitarTuner({
   return (
     <div className="w-full space-y-6">
       {/* Top Controls: Preset Selector, Auto-Detect Toggle, Mic Toggle */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-xl flex flex-wrap items-center justify-between gap-4">
-        {/* Preset Selector */}
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
+        {/* Preset Selector with Horizontal Swipe on Mobile */}
+        <div className="flex items-center gap-2 w-full sm:w-auto overflow-hidden">
           <label
             htmlFor="preset-select"
-            className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5"
+            className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5 flex-shrink-0"
           >
             <Sliders className="w-3.5 h-3.5 text-amber-400" />
-            <span>Tuning:</span>
+            <span className="hidden xs:inline">Tuning:</span>
           </label>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 touch-pan-x w-full">
             {presets.map((preset) => (
               <button
                 key={preset.id}
@@ -224,7 +224,7 @@ export function GuitarTuner({
                   setActivePresetId(preset.id);
                   setLockedStringNumber(null);
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium whitespace-nowrap transition-all cursor-pointer flex-shrink-0 ${
                   activePresetId === preset.id
                     ? "bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20"
                     : "bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 hover:text-white border border-slate-700/80"
@@ -237,10 +237,10 @@ export function GuitarTuner({
         </div>
 
         {/* Auto-Detect String Toggle & Mic Button */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
           {/* Auto-Detect Toggle */}
-          <div className="flex items-center gap-2 bg-slate-800/70 border border-slate-700/80 rounded-xl px-3 py-1.5">
-            <span className="text-xs font-mono text-slate-300">Auto-Detect</span>
+          <div className="flex items-center gap-2 bg-slate-800/70 border border-slate-700/80 rounded-xl px-2.5 py-1.5">
+            <span className="text-xs font-mono text-slate-300">Auto</span>
             <button
               type="button"
               role="switch"
