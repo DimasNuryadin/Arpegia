@@ -13,7 +13,11 @@ import {
   VoiceRole,
 } from "../types";
 import { getTechniqueSymbol, resolveNoteVoice } from "../lib/tab-utils";
-import { guitarSynth } from "../lib/synth";
+import {
+  guitarSynth,
+  GUITAR_INSTRUMENTS,
+  GuitarInstrumentType,
+} from "../lib/synth";
 import { InteractiveTabEditor } from "./InteractiveTabEditor";
 import { ExportHubBar } from "./ExportHubBar";
 import {
@@ -69,6 +73,22 @@ export function TablatureViewer({
   const [synthTime, setSynthTime] = useState<number>(0);
   const [synthSpeed, setSynthSpeed] = useState<number>(1.0);
   const [voiceFilter, setVoiceFilter] = useState<VoiceFilterMode>("all");
+
+  // Real Studio Soundfont / Instrument Tone Selection State
+  const [activeInstrument, setActiveInstrument] = useState<GuitarInstrumentType>(
+    guitarSynth.getInstrument()
+  );
+  const [isSampleLoaded, setIsSampleLoaded] = useState<boolean>(
+    guitarSynth.isSampleLoaded()
+  );
+
+  useEffect(() => {
+    const unsubscribe = guitarSynth.onInstrumentStateChange((inst, ready) => {
+      setActiveInstrument(inst);
+      setIsSampleLoaded(ready);
+    });
+    return unsubscribe;
+  }, []);
 
   // ASCII Tab Modal / Drawer State
   const [showAsciiModal, setShowAsciiModal] = useState<boolean>(false);
@@ -366,7 +386,7 @@ export function TablatureViewer({
             </div>
 
             {/* Polyphonic Voice Filter / Practice Mute Selector */}
-            <div className="flex items-center gap-1 px-2 text-xs font-mono text-slate-400">
+            <div className="flex items-center gap-1 px-2 text-xs font-mono text-slate-400 border-r border-slate-800">
               <Filter className="w-3.5 h-3.5 text-sky-400" />
               <select
                 aria-label="Tab Synth Voice Filter"
@@ -392,6 +412,48 @@ export function TablatureViewer({
                   Percussive Only
                 </option>
               </select>
+            </div>
+
+            {/* Guitar Tone Soundfont / Instrument Selector */}
+            <div className="flex items-center gap-1.5 px-2 text-xs font-mono text-slate-400">
+              <select
+                aria-label="Guitar Tone Instrument"
+                value={activeInstrument}
+                onChange={(e) => {
+                  const next = e.target.value as GuitarInstrumentType;
+                  setActiveInstrument(next);
+                  guitarSynth.setInstrument(next);
+                }}
+                className="bg-transparent text-slate-200 font-mono text-xs focus:outline-none cursor-pointer max-w-[135px] truncate"
+              >
+                {GUITAR_INSTRUMENTS.map((inst) => (
+                  <option
+                    key={inst.id}
+                    value={inst.id}
+                    className="bg-slate-900 text-slate-200"
+                  >
+                    {inst.icon} {inst.name}
+                  </option>
+                ))}
+              </select>
+              {/* Sampled Soundfont Ready Indicator */}
+              <span
+                title={
+                  isSampleLoaded
+                    ? "Studio Soundfont Multi-Samples Loaded (High-Fidelity Audio)"
+                    : "Using Physical Modeling String Synthesis"
+                }
+                className="relative flex h-2 w-2 flex-shrink-0 cursor-help"
+              >
+                {isSampleLoaded && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span
+                  className={`relative inline-flex rounded-full h-2 w-2 ${
+                    isSampleLoaded ? "bg-emerald-500" : "bg-amber-400"
+                  }`}
+                />
+              </span>
             </div>
           </div>
 
