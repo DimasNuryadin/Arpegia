@@ -12,6 +12,7 @@ import { ChordVoicingDiagram } from "../components/ChordVoicingDiagram";
 import { ImprovisationPanel } from "../components/ImprovisationPanel";
 import { GuitarFretboard } from "../components/GuitarFretboard";
 import { PipelineProgressTracker } from "../components/PipelineProgressTracker";
+import { TabReaderStudio } from "../components/TabReaderStudio";
 import {
   AnalysisResponse,
   ArrangementRequest,
@@ -382,8 +383,25 @@ export default function Home() {
           </div>
         )}
 
-        {/* Top-Level Mode: Live Mic Studio vs Studio Analysis */}
-        {studioMode === "live_mic" ? (
+        {/* Top-Level Mode: Tab Reader Studio vs Live Mic Studio vs Studio Analysis */}
+        {studioMode === "tab_reader" ? (
+          <section
+            aria-label="Guitar Tab Reader and Playback Studio"
+            className="animate-in fade-in duration-300"
+          >
+            <TabReaderStudio
+              onSendToArrangement={(tab, title) => {
+                setAnalysisData((prev) => ({
+                  ...prev,
+                  metadata: { ...prev.metadata, filename: title },
+                  tablature: tab,
+                }));
+                setStudioMode("upload_analysis");
+                setStatusNotice(`Imported "${title}" into AI Studio Analysis`);
+              }}
+            />
+          </section>
+        ) : studioMode === "live_mic" ? (
           <LiveMicStudio mockMode={mockMode} />
         ) : uploadState.isUploading ? (
           <section

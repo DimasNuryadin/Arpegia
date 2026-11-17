@@ -15,7 +15,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
-export type TopLevelStudioMode = "upload_analysis" | "live_mic";
+export type TopLevelStudioMode = "tab_reader" | "upload_analysis" | "live_mic";
 
 interface NavbarProps {
   currentMode: TopLevelStudioMode;
@@ -70,15 +70,28 @@ export function Navbar({
           <div className="hidden md:flex items-center bg-slate-900/90 border border-slate-800 rounded-2xl p-1 shadow-inner">
             <button
               type="button"
+              onClick={() => onSelectMode("tab_reader")}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer ${
+                currentMode === "tab_reader"
+                  ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-bold"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Music2 className="w-3.5 h-3.5" />
+              <span>🎸 Tab &amp; Score</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => onSelectMode("upload_analysis")}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer ${
                 currentMode === "upload_analysis"
-                  ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
+                  ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
               <FileAudio className="w-3.5 h-3.5" />
-              <span>🎵 Studio Analysis</span>
+              <span>🎵 AI Transcribe</span>
             </button>
 
             <button
@@ -86,12 +99,12 @@ export function Navbar({
               onClick={() => onSelectMode("live_mic")}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer ${
                 currentMode === "live_mic"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
               <Mic className="w-3.5 h-3.5" />
-              <span>🎙️ Live Mic Studio</span>
+              <span>🎙️ Live Jam &amp; Tuner</span>
             </button>
           </div>
 
@@ -186,21 +199,37 @@ export function Navbar({
 
         {/* Mobile Full-Width Segmented Mode Switcher (Always accessible on mobile) */}
         <div className="flex md:hidden pb-3 pt-1">
-          <div className="grid grid-cols-2 w-full bg-slate-950/90 border border-slate-800/90 rounded-xl p-1 shadow-inner gap-1">
+          <div className="grid grid-cols-3 w-full bg-slate-950/90 border border-slate-800/90 rounded-xl p-1 shadow-inner gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                onSelectMode("tab_reader");
+                setMobileMenuOpen(false);
+              }}
+              className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-xs font-mono font-semibold transition-all cursor-pointer text-center ${
+                currentMode === "tab_reader"
+                  ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-bold"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Music2 className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="truncate">Tab Play</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
                 onSelectMode("upload_analysis");
                 setMobileMenuOpen(false);
               }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-mono font-semibold transition-all cursor-pointer text-center ${
+              className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-xs font-mono font-semibold transition-all cursor-pointer text-center ${
                 currentMode === "upload_analysis"
                   ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
               <FileAudio className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="truncate">🎵 Studio Analysis</span>
+              <span className="truncate">Transcribe</span>
             </button>
 
             <button
@@ -209,14 +238,14 @@ export function Navbar({
                 onSelectMode("live_mic");
                 setMobileMenuOpen(false);
               }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-mono font-semibold transition-all cursor-pointer text-center ${
+              className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-xs font-mono font-semibold transition-all cursor-pointer text-center ${
                 currentMode === "live_mic"
                   ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
               <Mic className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="truncate">🎙️ Live Mic</span>
+              <span className="truncate">Live Jam</span>
             </button>
           </div>
         </div>
