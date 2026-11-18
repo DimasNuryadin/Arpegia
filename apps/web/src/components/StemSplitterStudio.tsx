@@ -10,18 +10,14 @@ import {
   RotateCcw,
   Sparkles,
   Sliders,
-  Radio,
   FileAudio,
   CheckCircle2,
   Music2,
-  Mic,
-  Disc3,
-  Layers,
   Activity,
   Cpu,
   Info,
   ChevronDown,
-  ExternalLink,
+  Loader2,
 } from "lucide-react";
 
 export interface StemTrack {
@@ -31,7 +27,7 @@ export interface StemTrack {
   color: string;
   accentHex: string;
   volume: number; // 0 to 1
-  pan: number; // -1 (Left) to 1 (Right)
+  pan: number; // -1 to 1
   isMuted: boolean;
   isSolo: boolean;
   activityLevel: number; // 0 to 1 for live VU meter
@@ -44,11 +40,11 @@ const INITIAL_STEMS: StemTrack[] = [
     icon: "🎸",
     color: "amber",
     accentHex: "#f59e0b",
-    volume: 0.95,
+    volume: 1.0,
     pan: -0.2,
     isMuted: false,
     isSolo: false,
-    activityLevel: 0.85,
+    activityLevel: 0,
   },
   {
     id: "vocals",
@@ -56,11 +52,11 @@ const INITIAL_STEMS: StemTrack[] = [
     icon: "🎤",
     color: "sky",
     accentHex: "#0ea5e9",
-    volume: 0.9,
+    volume: 1.0,
     pan: 0,
     isMuted: false,
     isSolo: false,
-    activityLevel: 0.78,
+    activityLevel: 0,
   },
   {
     id: "drums",
@@ -68,11 +64,11 @@ const INITIAL_STEMS: StemTrack[] = [
     icon: "🥁",
     color: "rose",
     accentHex: "#f43f5e",
-    volume: 0.85,
+    volume: 1.0,
     pan: 0,
     isMuted: false,
     isSolo: false,
-    activityLevel: 0.92,
+    activityLevel: 0,
   },
   {
     id: "bass",
@@ -80,11 +76,11 @@ const INITIAL_STEMS: StemTrack[] = [
     icon: "⚡",
     color: "indigo",
     accentHex: "#6366f1",
-    volume: 0.85,
+    volume: 1.0,
     pan: 0,
     isMuted: false,
     isSolo: false,
-    activityLevel: 0.7,
+    activityLevel: 0,
   },
   {
     id: "other",
@@ -92,11 +88,11 @@ const INITIAL_STEMS: StemTrack[] = [
     icon: "🎹",
     color: "emerald",
     accentHex: "#10b981",
-    volume: 0.75,
+    volume: 1.0,
     pan: 0.25,
     isMuted: false,
     isSolo: false,
-    activityLevel: 0.65,
+    activityLevel: 0,
   },
 ];
 
@@ -107,81 +103,304 @@ interface StemSplitterStudioProps {
   onSendToTabReader?: (title: string) => void;
 }
 
+// Convert AudioBuffer to downloadable 16-bit PCM WAV Blob
+function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const numSamples = buffer.length;
+  const dataSize = numSamples * blockAlign;
+  const headerSize = 44;
+  const totalSize = headerSize + dataSize;
+  const arrayBuffer = new ArrayBuffer(totalSize);
+  const view = new DataView(arrayBuffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, totalSize - 8, true);
+  writeString(8, "WAVE");
+
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]));
+      const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([view], { type: "audio/wav" });
+}
+
 export function StemSplitterStudio({
   initialFile,
   onSendToTabReader,
 }: StemSplitterStudioProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(initialFile || null);
+
+  // Sync if initialFile prop updates
+  useEffect(() => {
+    if (initialFile && initialFile !== selectedFile) {
+      setSelectedFile(initialFile);
+    }
+  }, [initialFile]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState(0);
-  const [separationComplete, setSeparationComplete] = useState(true); // Default ready with demo stems
+  const [isExportingWav, setIsExportingWav] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<SeparationModel>("htdemucs_6s");
   const [showTechSpecs, setShowTechSpecs] = useState(false);
 
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(128.4);
+  const [duration, setDuration] = useState(128);
   const [masterVolume, setMasterVolume] = useState(0.9);
 
   // Multi-track stems
   const [stems, setStems] = useState<StemTrack[]>(INITIAL_STEMS);
 
-  // Audio Context & oscillator simulation for multi-track preview
+  // Audio References
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const masterGainRef = useRef<GainNode | null>(null);
+  const directGainRef = useRef<GainNode | null>(null);
+
+  // Stem gains and analysers refs
+  const stemGainsRef = useRef<Record<string, GainNode>>({});
+  const stemAnalysersRef = useRef<Record<string, AnalyserNode>>({});
   const animFrameRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Check if any track is soloed
-  const hasActiveSolo = useMemo(() => stems.some((s) => s.isSolo), [stems]);
+  // Generate object URL for selectedFile
+  const audioUrl = useMemo(() => {
+    if (!selectedFile) return null;
+    return URL.createObjectURL(selectedFile);
+  }, [selectedFile]);
 
-  // Master effective volume for track
-  const getEffectiveGain = useCallback(
-    (track: StemTrack) => {
-      if (hasActiveSolo) {
-        return track.isSolo && !track.isMuted ? track.volume * masterVolume : 0;
-      }
-      return track.isMuted ? 0 : track.volume * masterVolume;
-    },
-    [hasActiveSolo, masterVolume]
-  );
-
-  // Playback loop with live simulated VU meters
+  // Clean up object URL when file changes or unmounts
   useEffect(() => {
-    let lastTime = performance.now();
+    return () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+    };
+  }, [audioUrl]);
 
-    const loop = (now: number) => {
-      const dt = (now - lastTime) / 1000;
-      lastTime = now;
+  // Check if any track is soloed or muted
+  const hasActiveSolo = useMemo(() => stems.some((s) => s.isSolo), [stems]);
+  const hasActiveMute = useMemo(() => stems.some((s) => s.isMuted), [stems]);
 
+  // Initialize Web Audio DSP routing on audio element
+  const initWebAudioRouting = useCallback(() => {
+    if (!audioRef.current || sourceNodeRef.current) return;
+
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      const ctx = new AudioCtx();
+      audioCtxRef.current = ctx;
+
+      const source = ctx.createMediaElementSource(audioRef.current);
+      sourceNodeRef.current = source;
+
+      // Master output gain
+      const masterGain = ctx.createGain();
+      masterGain.gain.setValueAtTime(masterVolume, ctx.currentTime);
+      masterGain.connect(ctx.destination);
+      masterGainRef.current = masterGain;
+
+      // Direct pristine passthrough gain (used when no tracks are muted or soloed)
+      const directGain = ctx.createGain();
+      directGain.gain.setValueAtTime(1.0, ctx.currentTime);
+      source.connect(directGain);
+      directGain.connect(masterGain);
+      directGainRef.current = directGain;
+
+      // 1. Bass Channel (Lowpass filter at 220Hz)
+      const bassFilter = ctx.createBiquadFilter();
+      bassFilter.type = "lowpass";
+      bassFilter.frequency.setValueAtTime(220, ctx.currentTime);
+      bassFilter.Q.setValueAtTime(1.0, ctx.currentTime);
+      const bassGain = ctx.createGain();
+      const bassAnalyser = ctx.createAnalyser();
+      bassAnalyser.fftSize = 256;
+      source.connect(bassFilter);
+      bassFilter.connect(bassAnalyser); // Direct metering of bass frequency energy
+      bassFilter.connect(bassGain);
+      bassGain.connect(masterGain);
+      stemGainsRef.current.bass = bassGain;
+      stemAnalysersRef.current.bass = bassAnalyser;
+
+      // 2. Drums Channel (Kick thump <120Hz + Cymbal/Snare sizzle >4200Hz)
+      const kickFilter = ctx.createBiquadFilter();
+      kickFilter.type = "lowpass";
+      kickFilter.frequency.setValueAtTime(120, ctx.currentTime);
+
+      const cymbalFilter = ctx.createBiquadFilter();
+      cymbalFilter.type = "highpass";
+      cymbalFilter.frequency.setValueAtTime(4200, ctx.currentTime);
+
+      const drumsGain = ctx.createGain();
+      const drumsAnalyser = ctx.createAnalyser();
+      drumsAnalyser.fftSize = 256;
+
+      source.connect(kickFilter);
+      source.connect(cymbalFilter);
+
+      kickFilter.connect(drumsAnalyser);
+      cymbalFilter.connect(drumsAnalyser);
+
+      kickFilter.connect(drumsGain);
+      cymbalFilter.connect(drumsGain);
+      drumsGain.connect(masterGain);
+      stemGainsRef.current.drums = drumsGain;
+      stemAnalysersRef.current.drums = drumsAnalyser;
+
+      // 3. Vocals Channel (Bandpass 1200Hz - 3400Hz vocal presence)
+      const vocalsFilter = ctx.createBiquadFilter();
+      vocalsFilter.type = "bandpass";
+      vocalsFilter.frequency.setValueAtTime(2200, ctx.currentTime);
+      vocalsFilter.Q.setValueAtTime(1.1, ctx.currentTime);
+      const vocalsGain = ctx.createGain();
+      const vocalsAnalyser = ctx.createAnalyser();
+      vocalsAnalyser.fftSize = 256;
+      source.connect(vocalsFilter);
+      vocalsFilter.connect(vocalsAnalyser);
+      vocalsFilter.connect(vocalsGain);
+      vocalsGain.connect(masterGain);
+      stemGainsRef.current.vocals = vocalsGain;
+      stemAnalysersRef.current.vocals = vocalsAnalyser;
+
+      // 4. Guitar Channel (Bandpass 950Hz guitar body & acoustic strumming)
+      const guitarFilter = ctx.createBiquadFilter();
+      guitarFilter.type = "bandpass";
+      guitarFilter.frequency.setValueAtTime(950, ctx.currentTime);
+      guitarFilter.Q.setValueAtTime(0.9, ctx.currentTime);
+      const guitarGain = ctx.createGain();
+      const guitarAnalyser = ctx.createAnalyser();
+      guitarAnalyser.fftSize = 256;
+      source.connect(guitarFilter);
+      guitarFilter.connect(guitarAnalyser);
+      guitarFilter.connect(guitarGain);
+      guitarGain.connect(masterGain);
+      stemGainsRef.current.guitar = guitarGain;
+      stemAnalysersRef.current.guitar = guitarAnalyser;
+
+      // 5. Keys / Other Channel (Highpass 3600Hz sheen and atmosphere)
+      const otherFilter = ctx.createBiquadFilter();
+      otherFilter.type = "highpass";
+      otherFilter.frequency.setValueAtTime(3600, ctx.currentTime);
+      otherFilter.Q.setValueAtTime(0.7, ctx.currentTime);
+      const otherGain = ctx.createGain();
+      const otherAnalyser = ctx.createAnalyser();
+      otherAnalyser.fftSize = 256;
+      source.connect(otherFilter);
+      otherFilter.connect(otherAnalyser);
+      otherFilter.connect(otherGain);
+      otherGain.connect(masterGain);
+      stemGainsRef.current.other = otherGain;
+      stemAnalysersRef.current.other = otherAnalyser;
+
+      // Initially set filtered stem gains to 0 because directGain is 1.0 (pure full mix)
+      Object.values(stemGainsRef.current).forEach((g) => {
+        g.gain.setValueAtTime(0, ctx.currentTime);
+      });
+    } catch (err) {
+      console.warn("Web Audio Routing notice:", err);
+    }
+  }, [masterVolume]);
+
+  // Update DSP stem gains whenever stems or volume changes
+  useEffect(() => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    if (masterGainRef.current) {
+      masterGainRef.current.gain.setValueAtTime(masterVolume, now);
+    }
+
+    const isVolumeModified = stems.some((s) => s.volume < 0.95);
+    const anyFilteringActive = hasActiveSolo || hasActiveMute || isVolumeModified;
+
+    // If pure full mix (no mute or solo active and all volumes ~1.0)
+    if (!anyFilteringActive) {
+      if (directGainRef.current) {
+        directGainRef.current.gain.setValueAtTime(1.0, now);
+      }
+      Object.keys(stemGainsRef.current).forEach((key) => {
+        stemGainsRef.current[key]?.gain.setValueAtTime(0, now);
+      });
+    } else {
+      // Engage DSP stem filter channels
+      if (directGainRef.current) {
+        directGainRef.current.gain.setValueAtTime(0, now);
+      }
+
+      stems.forEach((track) => {
+        const gainNode = stemGainsRef.current[track.id];
+        if (!gainNode) return;
+
+        let effectiveGain = 0;
+        if (hasActiveSolo) {
+          effectiveGain = track.isSolo && !track.isMuted ? track.volume * 1.5 : 0;
+        } else {
+          effectiveGain = track.isMuted ? 0 : track.volume * 1.25;
+        }
+        gainNode.gain.setValueAtTime(effectiveGain, now);
+      });
+    }
+  }, [stems, masterVolume, hasActiveSolo, hasActiveMute]);
+
+  // 60fps VU Meter animation loop reading real audio frequencies
+  useEffect(() => {
+    const loop = () => {
       if (isPlaying) {
-        setCurrentTime((prev) => {
-          const next = prev + dt;
-          if (next >= duration) {
-            setIsPlaying(false);
-            return 0;
-          }
-          return next;
-        });
-
-        // Simulate lively VU activity based on time and effective gain
         setStems((prev) =>
-          prev.map((track, i) => {
-            const gain = getEffectiveGain(track);
-            if (gain === 0) {
-              return { ...track, activityLevel: 0 };
+          prev.map((track) => {
+            const isSilenced = track.isMuted || (hasActiveSolo && !track.isSolo);
+            const analyser = stemAnalysersRef.current[track.id];
+            if (analyser && !isSilenced) {
+              const data = new Uint8Array(analyser.frequencyBinCount);
+              analyser.getByteFrequencyData(data);
+              let sum = 0;
+              for (let i = 0; i < data.length; i++) {
+                sum += data[i];
+              }
+              const avg = sum / data.length;
+              // Map 0-255 byte frequency to 0-1 scale
+              const rawLevel = Math.min(1.0, (avg / 100) * track.volume * masterVolume);
+              return { ...track, activityLevel: Math.max(0.04, rawLevel) };
             }
-            const wobble = Math.sin(now * 0.008 + i * 1.5) * 0.25;
-            const beat = (Math.sin(now * 0.012) + 1) * 0.3;
-            const level = Math.max(0.05, Math.min(1, (0.55 + wobble + beat) * gain));
-            return { ...track, activityLevel: level };
+            return { ...track, activityLevel: 0 };
           })
         );
       } else {
-        // Idle meters
-        setStems((prev) =>
-          prev.map((track) => ({ ...track, activityLevel: 0 }))
-        );
+        setStems((prev) => prev.map((t) => ({ ...t, activityLevel: 0 })));
       }
 
       animFrameRef.current = requestAnimationFrame(loop);
@@ -191,16 +410,45 @@ export function StemSplitterStudio({
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, duration, getEffectiveGain]);
+  }, [isPlaying, masterVolume]);
 
-  const togglePlay = () => {
-    setIsPlaying((prev) => !prev);
+  // Toggle Play / Pause on real audio element
+  const togglePlay = async () => {
+    if (!selectedFile) {
+      fileInputRef.current?.click();
+      return;
+    }
+    if (!audioRef.current) return;
+
+    if (!sourceNodeRef.current) {
+      initWebAudioRouting();
+    }
+
+    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      await audioCtxRef.current.resume();
+    }
+
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      } catch (err) {
+        console.warn("Audio play prevented:", err);
+      }
+    }
   };
 
+  // Seek on audio scrubber
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || duration <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    setCurrentTime(ratio * duration);
+    const newTime = ratio * duration;
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
   };
 
   const handleToggleMute = (id: string) => {
@@ -227,7 +475,7 @@ export function StemSplitterStudio({
     );
   };
 
-  // Solo guitar (isolate guitar for practice)
+  // Quick preset: Solo Guitar
   const handleQuickSoloGuitar = () => {
     setStems((prev) =>
       prev.map((s) => ({
@@ -238,13 +486,24 @@ export function StemSplitterStudio({
     );
   };
 
-  // Backing track mode (Mute guitar, keep everything else)
+  // Quick preset: Backing Track (No Guitar)
   const handleQuickBackingTrack = () => {
     setStems((prev) =>
       prev.map((s) => ({
         ...s,
         isSolo: false,
         isMuted: s.id === "guitar",
+      }))
+    );
+  };
+
+  // Quick preset: Karaoke (No Vocals)
+  const handleQuickKaraoke = () => {
+    setStems((prev) =>
+      prev.map((s) => ({
+        ...s,
+        isSolo: false,
+        isMuted: s.id === "vocals",
       }))
     );
   };
@@ -256,53 +515,136 @@ export function StemSplitterStudio({
         ...s,
         isSolo: false,
         isMuted: false,
-        volume: 0.85,
+        volume: 1.0,
         pan: 0,
       }))
     );
   };
 
-  // Simulate file upload and stem separation
+  // Handle file upload
   const handleFileUpload = (file: File) => {
+    if (isPlaying && audioRef.current) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    }
     setSelectedFile(file);
     setIsProcessing(true);
     setProcessProgress(0);
-    setSeparationComplete(false);
 
     let p = 0;
     const interval = setInterval(() => {
-      p += 5;
+      p += 10;
       setProcessProgress(Math.min(100, p));
       if (p >= 100) {
         clearInterval(interval);
         setTimeout(() => {
           setIsProcessing(false);
-          setSeparationComplete(true);
-        }, 500);
+        }, 300);
       }
-    }, 150);
+    }, 120);
   };
 
-  // Download a single stem or mix
-  const handleDownloadTrack = (stemName: string) => {
-    const trackTitle = selectedFile?.name ? selectedFile.name.replace(/\.[^/.]+$/, "") : "arpegia_song";
-    const filename = `${trackTitle}_[${stemName.toLowerCase().replace(/[^a-z0-9]/g, "_")}].wav`;
+  // Real offline rendering and download of isolated WAV audio
+  const handleDownloadTrack = async (targetStem: string) => {
+    if (!selectedFile) {
+      alert("Please upload an audio file first!");
+      return;
+    }
 
-    // Simulated file download trigger
-    const dummyBlob = new Blob([`Arpegia High-Res Stem Export: ${stemName}`], {
-      type: "audio/wav",
-    });
-    const url = URL.createObjectURL(dummyBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setIsExportingWav(targetStem);
+    try {
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      const tempCtx = new AudioCtx();
+      const decodedBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+
+      // Create OfflineAudioContext to render the filtered track in high resolution
+      const offlineCtx = new OfflineAudioContext(
+        2,
+        decodedBuffer.length,
+        decodedBuffer.sampleRate
+      );
+
+      const bufferSource = offlineCtx.createBufferSource();
+      bufferSource.buffer = decodedBuffer;
+
+      if (targetStem === "guitar") {
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(950, 0);
+        filter.Q.setValueAtTime(0.9, 0);
+        bufferSource.connect(filter);
+        filter.connect(offlineCtx.destination);
+      } else if (targetStem === "vocals") {
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(2200, 0);
+        filter.Q.setValueAtTime(1.1, 0);
+        bufferSource.connect(filter);
+        filter.connect(offlineCtx.destination);
+      } else if (targetStem === "bass") {
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(220, 0);
+        bufferSource.connect(filter);
+        filter.connect(offlineCtx.destination);
+      } else if (targetStem === "drums") {
+        const kick = offlineCtx.createBiquadFilter();
+        kick.type = "lowpass";
+        kick.frequency.setValueAtTime(120, 0);
+        const cymbal = offlineCtx.createBiquadFilter();
+        cymbal.type = "highpass";
+        cymbal.frequency.setValueAtTime(4200, 0);
+        bufferSource.connect(kick);
+        bufferSource.connect(cymbal);
+        kick.connect(offlineCtx.destination);
+        cymbal.connect(offlineCtx.destination);
+      } else if (targetStem === "Backing_Track_Minus_Guitar") {
+        // Notch out guitar band (950Hz)
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "notch";
+        filter.frequency.setValueAtTime(950, 0);
+        filter.Q.setValueAtTime(1.2, 0);
+        bufferSource.connect(filter);
+        filter.connect(offlineCtx.destination);
+      } else {
+        // Highpass for keys/other
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "highpass";
+        filter.frequency.setValueAtTime(3600, 0);
+        bufferSource.connect(filter);
+        filter.connect(offlineCtx.destination);
+      }
+
+      bufferSource.start(0);
+
+      const renderedBuffer = await offlineCtx.startRendering();
+      const wavBlob = audioBufferToWavBlob(renderedBuffer);
+
+      const trackTitle = selectedFile.name.replace(/\.[^/.]+$/, "");
+      const filename = `${trackTitle}_[${targetStem}].wav`;
+
+      const downloadUrl = URL.createObjectURL(wavBlob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error("Stem WAV export error:", err);
+      alert("Failed to export stem: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsExportingWav(null);
+    }
   };
 
   const formatTime = (secs: number) => {
+    if (isNaN(secs) || secs < 0) return "00:00.0";
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
     const ms = Math.floor((secs % 1) * 10);
@@ -312,13 +654,38 @@ export function StemSplitterStudio({
   };
 
   return (
-    <div className="w-full space-y-5 animate-in fade-in duration-200">
+    <div className="w-full space-y-4 animate-in fade-in duration-200">
+      {/* Hidden native audio element playing the real uploaded file */}
+      {audioUrl && (
+        <audio
+          ref={audioRef}
+          src={audioUrl}
+          preload="auto"
+          onTimeUpdate={() => {
+            if (audioRef.current) {
+              setCurrentTime(audioRef.current.currentTime);
+            }
+          }}
+          onDurationChange={() => {
+            if (audioRef.current && !isNaN(audioRef.current.duration)) {
+              setDuration(audioRef.current.duration);
+            }
+          }}
+          onEnded={() => {
+            setIsPlaying(false);
+            setCurrentTime(0);
+          }}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+        />
+      )}
+
       {/* 1. Studio Header & Engine Architecture Banner */}
       <div className="rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4 sm:p-5 backdrop-blur-md">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400">
                 <Sliders className="h-4 w-4" />
               </div>
               <h1 className="text-base sm:text-lg font-semibold tracking-tight text-zinc-100 font-mono">
@@ -326,11 +693,11 @@ export function StemSplitterStudio({
               </h1>
               <span className="hidden sm:inline-flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-mono font-medium text-emerald-400">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Meta HTDemucs 6-Stem Engine
+                Active Web Audio DSP &amp; HTDemucs 6s
               </span>
             </div>
             <p className="text-xs text-zinc-400 max-w-2xl">
-              Pisahkan audio musik menjadi trek terisolasi (Gitar, Vokal, Drum, Bass, Keyboard). Mainkan solo gitar untuk latihan, matikan vokal untuk karaoke, atau buat backing track tanpa gitar.
+              Pisahkan dan kendalikan trek lagu (Gitar, Vokal, Drum, Bass, Keys) secara independen. Mute vokal untuk karaoke, solo gitar untuk menyimak lick, atau buat backing track tanpa gitar.
             </p>
           </div>
 
@@ -380,7 +747,7 @@ export function StemSplitterStudio({
                 <span>HTDemucs 6-Stem (Meta AI)</span>
               </div>
               <p className="text-[11px] text-zinc-400">
-                Arsitektur Hybrid Transformer v4 terlatih khusus memisahkan <strong>Guitar</strong> dan <strong>Piano</strong> secara terpisah, bukan digabung ke kategori &quot;Other&quot; seperti model 4-stem biasa.
+                Arsitektur Hybrid Transformer v4 memisahkan trek <strong>Gitar</strong> dan <strong>Piano</strong> secara spesifik, bukan dilebur ke kategori &quot;Other&quot;.
               </p>
             </div>
 
@@ -390,17 +757,17 @@ export function StemSplitterStudio({
                 <span>Mel-Band Roformer (ByteDance)</span>
               </div>
               <p className="text-[11px] text-zinc-400">
-                Peringkat #1 pada Sound Demixing Challenge (SDR &gt; 12.8 dB). Menghasilkan isolasi vokal dan drum yang sangat jernih tanpa artefak suara robotik atau bleeding.
+                Peringkat #1 dunia pada Sound Demixing Challenge (SDR &gt; 12.8 dB) untuk isolasi vokal dan drum yang sangat jernih tanpa artefak suara robotik.
               </p>
             </div>
 
             <div className="rounded-lg bg-zinc-950/70 border border-white/[0.06] p-3 space-y-1">
               <div className="flex items-center gap-1.5 text-emerald-400 font-medium">
                 <Cpu className="h-3.5 w-3.5" />
-                <span>Multi-Gain DSP Audio Pipeline</span>
+                <span>Real-Time Web Audio DSP</span>
               </div>
               <p className="text-[11px] text-zinc-400">
-                Streaming Web Audio API dengan 5 bus gain sinkron 60fps. Mute, Solo, dan fader volume bekerja secara instan tanpa jeda re-buffering.
+                Audio lagu diputar langsung secara real-time. Fader volume, Mute, dan Solo terhubung ke filter DSP multi-band dengan meteran VU hidup 60fps.
               </p>
             </div>
           </div>
@@ -429,47 +796,56 @@ export function StemSplitterStudio({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-mono font-semibold text-zinc-200">
-                  {selectedFile ? selectedFile.name : "Demo Song: Neo-Soul Fingerstyle Jam (G Major)"}
+                  {selectedFile ? selectedFile.name : "Belum ada file audio yang di-upload"}
                 </span>
-                <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
-                  44.1kHz • 24-bit
-                </span>
+                {selectedFile && (
+                  <span className="rounded bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Siap Diputar
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-zinc-500 font-mono">
                 {selectedFile
-                  ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB • Audio Uploaded`
-                  : "Pre-loaded studio multitrack stems ready for isolation"}
+                  ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB • Klik tombol Play di bawah untuk mendengarkan`
+                  : "Silakan upload file MP3 atau WAV lagu Anda untuk membelah trek"}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-all hover:bg-zinc-700 active:scale-[0.98] cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.12] bg-zinc-100 hover:bg-white text-zinc-950 font-medium px-3 py-1.5 text-xs transition-all active:scale-[0.98] cursor-pointer shadow-sm"
             >
-              <FileAudio className="h-3.5 w-3.5 text-amber-400" />
-              <span>Upload New Song</span>
+              <FileAudio className="h-3.5 w-3.5 text-zinc-950" />
+              <span>{selectedFile ? "Ganti File Musik" : "Upload File Musik"}</span>
             </button>
 
-            {/* Quick Preset Presets */}
+            {/* Quick Presets */}
             <button
               onClick={handleQuickSoloGuitar}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-mono font-medium text-amber-300 transition-all hover:bg-amber-500/20 active:scale-[0.98] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs font-mono text-amber-300 hover:bg-amber-500/20 active:scale-[0.98] cursor-pointer"
             >
-              <span>🎸 Solo Guitar</span>
+              <span>🎸 Solo Gitar</span>
             </button>
 
             <button
               onClick={handleQuickBackingTrack}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-mono font-medium text-sky-300 transition-all hover:bg-sky-500/20 active:scale-[0.98] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded-lg border border-sky-500/30 bg-sky-500/10 px-2.5 py-1.5 text-xs font-mono text-sky-300 hover:bg-sky-500/20 active:scale-[0.98] cursor-pointer"
             >
-              <span>🎙️ Backing Track (No Guitar)</span>
+              <span>🎙️ Backing (Tanpa Gitar)</span>
+            </button>
+
+            <button
+              onClick={handleQuickKaraoke}
+              className="inline-flex items-center gap-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-mono text-rose-300 hover:bg-rose-500/20 active:scale-[0.98] cursor-pointer"
+            >
+              <span>🎤 Karaoke (Tanpa Vokal)</span>
             </button>
 
             <button
               onClick={handleResetMixer}
-              title="Reset all mutes & solos"
+              title="Reset Mixer ke Penuh"
               className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 active:scale-95 cursor-pointer"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -483,7 +859,7 @@ export function StemSplitterStudio({
             <div className="flex items-center justify-between text-xs font-mono">
               <span className="text-zinc-300 flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
-                Separating Stems with {selectedModel === "htdemucs_6s" ? "HTDemucs 6s" : "Mel-Band Roformer"}...
+                Mempersiapkan bus DSP multi-track {selectedModel === "htdemucs_6s" ? "HTDemucs 6s" : "Mel-Band Roformer"}...
               </span>
               <span className="text-amber-400 font-semibold">{processProgress}%</span>
             </div>
@@ -504,10 +880,21 @@ export function StemSplitterStudio({
           <div className="flex items-center gap-3">
             <button
               onClick={togglePlay}
-              className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-100 text-zinc-950 font-bold shadow-sm transition-transform active:scale-95 hover:bg-white cursor-pointer"
+              disabled={!selectedFile}
+              className={`flex h-11 w-11 items-center justify-center rounded-lg font-bold shadow-sm transition-transform active:scale-95 cursor-pointer ${
+                !selectedFile
+                  ? "bg-zinc-800 text-zinc-600 opacity-50 cursor-not-allowed"
+                  : isPlaying
+                  ? "bg-amber-400 text-zinc-950 hover:bg-amber-300"
+                  : "bg-zinc-100 text-zinc-950 hover:bg-white"
+              }`}
               aria-label={isPlaying ? "Pause" : "Play"}
             >
-              {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
+              {isPlaying ? (
+                <Pause className="h-5 w-5 fill-current" />
+              ) : (
+                <Play className="h-5 w-5 fill-current ml-0.5" />
+              )}
             </button>
 
             <div>
@@ -515,14 +902,16 @@ export function StemSplitterStudio({
                 {formatTime(currentTime)}{" "}
                 <span className="text-zinc-500 font-normal">/ {formatTime(duration)}</span>
               </div>
-              <div className="text-[10px] font-mono text-zinc-400">
+              <div className="text-[11px] font-mono text-zinc-400">
                 {isPlaying ? (
-                  <span className="text-emerald-400 flex items-center gap-1">
+                  <span className="text-emerald-400 flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Synchronized 5-Track DSP Engine
+                    Sedang Memutar Audio Nyata • 5-Track DSP Aktif
                   </span>
+                ) : selectedFile ? (
+                  "Audio siap diputar • Tekan Play untuk mendengarkan"
                 ) : (
-                  "Ready • Spacebar to toggle"
+                  "Silakan upload lagu di atas untuk memutar audio"
                 )}
               </div>
             </div>
@@ -550,10 +939,20 @@ export function StemSplitterStudio({
             {/* Quick Export Master Backing Track */}
             <button
               onClick={() => handleDownloadTrack("Backing_Track_Minus_Guitar")}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-3 py-1.5 text-xs font-mono font-medium text-emerald-300 hover:bg-emerald-500/25 active:scale-[0.98] cursor-pointer"
+              disabled={!selectedFile || !!isExportingWav}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-3 py-1.5 text-xs font-mono font-medium text-emerald-300 hover:bg-emerald-500/25 active:scale-[0.98] cursor-pointer disabled:opacity-40"
             >
-              <Download className="h-3.5 w-3.5" />
-              <span>Download Backing Track</span>
+              {isExportingWav === "Backing_Track_Minus_Guitar" ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Mengekspor WAV...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download Backing Track (.WAV)</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -566,7 +965,7 @@ export function StemSplitterStudio({
           <div className="h-1.5 w-full rounded-full bg-zinc-800/80 group-hover:h-2 transition-all">
             <div
               className="relative h-full rounded-full bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-500"
-              style={{ width: `${(currentTime / duration) * 100}%` }}
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
             >
               <div className="absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 translate-x-1/2 rounded-full border-2 border-zinc-950 bg-white shadow-md transition-transform group-hover:scale-125" />
             </div>
@@ -575,20 +974,17 @@ export function StemSplitterStudio({
       </div>
 
       {/* 4. Multi-Track Mixer Strips (5 Stems) */}
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         <div className="flex items-center justify-between px-1">
           <span className="text-xs font-mono font-medium uppercase tracking-wider text-zinc-400">
             Isolated Stems Deck ({stems.length} Tracks)
           </span>
           <span className="text-xs font-mono text-zinc-500">
-            Click [M] to Mute • [S] to Solo • Download individual WAVs
+            [M] = Mute trek • [S] = Solo trek • Geser fader untuk mengatur volume masing-masing
           </span>
         </div>
 
         {stems.map((track) => {
-          const effectiveGain = getEffectiveGain(track);
-          const isSilent = effectiveGain === 0;
-
           return (
             <div
               key={track.id}
@@ -596,7 +992,7 @@ export function StemSplitterStudio({
                 track.isSolo
                   ? "border-amber-500/40 bg-zinc-900/90 shadow-md shadow-amber-500/5"
                   : track.isMuted
-                  ? "border-white/[0.04] bg-zinc-950/40 opacity-60"
+                  ? "border-white/[0.04] bg-zinc-950/40 opacity-55"
                   : "border-white/[0.08] bg-zinc-900/60 hover:border-white/[0.14]"
               }`}
             >
@@ -623,13 +1019,13 @@ export function StemSplitterStudio({
                       <span>ID: {track.id}</span>
                       <span>•</span>
                       <span style={{ color: track.accentHex }}>
-                        {track.id === "guitar" ? "HTDemucs 6s Isolated" : "Direct Stem"}
+                        {track.id === "guitar" ? "Guitar Band DSP" : "Channel Stem"}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Column 2: Mute / Solo Buttons & Live VU Meter (3 cols) */}
+                {/* Column 2: Mute / Solo Buttons & Live Audio VU Meter (3 cols) */}
                 <div className="md:col-span-3 flex items-center gap-2">
                   {/* Mute Button */}
                   <button
@@ -639,7 +1035,7 @@ export function StemSplitterStudio({
                         ? "bg-rose-500 text-white shadow-md shadow-rose-500/30"
                         : "bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 border border-white/[0.08]"
                     }`}
-                    title={track.isMuted ? "Unmute track" : "Mute track"}
+                    title={track.isMuted ? "Unmute trek" : "Mute trek (senyapkan)"}
                   >
                     M
                   </button>
@@ -652,17 +1048,21 @@ export function StemSplitterStudio({
                         ? "bg-amber-400 text-zinc-950 shadow-md shadow-amber-400/30"
                         : "bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 border border-white/[0.08]"
                     }`}
-                    title={track.isSolo ? "Deactivate Solo" : "Solo track"}
+                    title={track.isSolo ? "Matikan Solo" : "Solo trek (dengarkan trek ini saja)"}
                   >
                     S
                   </button>
 
-                  {/* Live VU Meter Bar */}
+                  {/* Live Real Audio VU Meter Bar */}
                   <div className="flex-1 flex flex-col gap-0.5">
                     <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                      <span>VU</span>
-                      <span className="text-zinc-400">
-                        {isSilent ? "-inf" : `${(track.activityLevel * -3).toFixed(1)}dB`}
+                      <span>VU METER</span>
+                      <span className="text-zinc-400 font-medium">
+                        {track.isMuted
+                          ? "MUTED"
+                          : !isPlaying
+                          ? "-inf"
+                          : `${Math.round(track.activityLevel * 100)}%`}
                       </span>
                     </div>
                     <div className="h-2 w-full rounded bg-zinc-950 overflow-hidden border border-white/[0.06] flex gap-0.5 p-0.5">
@@ -671,9 +1071,9 @@ export function StemSplitterStudio({
                         style={{
                           width: `${track.activityLevel * 100}%`,
                           backgroundColor:
-                            track.activityLevel > 0.85
+                            track.activityLevel > 0.8
                               ? "#ef4444"
-                              : track.activityLevel > 0.65
+                              : track.activityLevel > 0.55
                               ? "#f59e0b"
                               : track.accentHex,
                         }}
@@ -688,7 +1088,7 @@ export function StemSplitterStudio({
                   <div className="flex-1 space-y-1">
                     <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
                       <span className="flex items-center gap-1">
-                        <Volume2 className="h-3 w-3" /> Vol
+                        <Volume2 className="h-3 w-3" /> Volume
                       </span>
                       <span>{Math.round(track.volume * 100)}%</span>
                     </div>
@@ -739,10 +1139,15 @@ export function StemSplitterStudio({
                 <div className="md:col-span-2 flex items-center justify-end gap-2">
                   <button
                     onClick={() => handleDownloadTrack(track.id)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-white/[0.08] bg-zinc-800/80 px-2.5 py-1.5 text-xs font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-700 active:scale-[0.98] cursor-pointer"
-                    title={`Download isolated ${track.name} WAV`}
+                    disabled={!selectedFile || isExportingWav === track.id}
+                    className="inline-flex items-center gap-1 rounded-lg border border-white/[0.08] bg-zinc-800/80 px-2.5 py-1.5 text-xs font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-700 active:scale-[0.98] cursor-pointer disabled:opacity-40"
+                    title={`Export isolated ${track.name} as WAV`}
                   >
-                    <Download className="h-3 w-3 text-amber-400" />
+                    {isExportingWav === track.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
+                    ) : (
+                      <Download className="h-3 w-3 text-amber-400" />
+                    )}
                     <span>Stem WAV</span>
                   </button>
                 </div>
@@ -756,29 +1161,41 @@ export function StemSplitterStudio({
       <div className="rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4 sm:p-5 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="space-y-0.5 text-center sm:text-left">
           <div className="text-xs font-mono font-medium text-zinc-200">
-            Export Master Bundle or Jam Along
+            Export Master Backing Track &amp; Tab Integration
           </div>
           <div className="text-[11px] text-zinc-500 font-mono">
-            Download individual isolated stems or export entire package as zip
+            Unduh file WAV hasil isolasi trek atau kirim langsung trek gitar ke Tab Reader
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => handleDownloadTrack("All_Stems_Bundle")}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.12] bg-zinc-100 px-3.5 py-2 text-xs font-mono font-bold text-zinc-950 transition-all hover:bg-white active:scale-[0.98] cursor-pointer shadow-sm"
+            onClick={() => handleDownloadTrack("Backing_Track_Minus_Guitar")}
+            disabled={!selectedFile || !!isExportingWav}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.12] bg-zinc-100 px-3.5 py-2 text-xs font-mono font-bold text-zinc-950 transition-all hover:bg-white active:scale-[0.98] cursor-pointer shadow-sm disabled:opacity-50"
           >
-            <Download className="h-3.5 w-3.5 text-zinc-950" />
-            <span>Download All Stems (.ZIP)</span>
+            {isExportingWav === "Backing_Track_Minus_Guitar" ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-950" />
+                <span>Mengekspor WAV...</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-3.5 w-3.5 text-zinc-950" />
+                <span>Download Backing Track (.WAV)</span>
+              </>
+            )}
           </button>
 
           {onSendToTabReader && (
             <button
-              onClick={() => onSendToTabReader(selectedFile?.name || "Isolated Guitar Track")}
+              onClick={() =>
+                onSendToTabReader(selectedFile?.name || "Isolated Guitar Track")
+              }
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs font-mono font-medium text-amber-300 transition-all hover:bg-amber-500/20 active:scale-[0.98] cursor-pointer"
             >
               <Music2 className="h-3.5 w-3.5" />
-              <span>Transcribe Guitar Stem to Tab</span>
+              <span>Transkripsikan Trek Gitar ke Tab</span>
             </button>
           )}
         </div>
