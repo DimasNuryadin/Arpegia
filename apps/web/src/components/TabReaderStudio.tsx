@@ -143,6 +143,7 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
           },
           player: {
             enablePlayer: true,
+            outputMode: 1, // WebAudioScriptProcessor: prevents AudioWorklet global scope failure in Next.js Turbopack
             soundFont: "/alphatab/soundfont/sonivox.sf2",
           },
         });
@@ -189,14 +190,14 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
     };
   }, [displayMode, parsedResult.alphaTex]);
 
-  // Handle Play/Stop toggle for standalone Arpegia synth
+  // Handle Play/Stop toggle with high-fidelity Arpegia guitar soundfonts & AlphaTab cursor sync
   const handleTogglePlayback = useCallback(() => {
     if (isPlaying) {
       // Stop
       guitarSynth.stopTabPlayback();
       if (alphaTabApiRef.current) {
         try {
-          (alphaTabApiRef.current as { stop: () => void }).stop();
+          (alphaTabApiRef.current as { timePosition: number }).timePosition = 0;
         } catch {
           // ignore
         }
@@ -207,28 +208,20 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
       // Play
       setIsPlaying(true);
 
-      // If in AlphaTab mode with built-in player
-      if (
-        displayMode === "alphatab" &&
-        alphaTabApiRef.current &&
-        typeof (alphaTabApiRef.current as { play: () => void }).play ===
-          "function"
-      ) {
-        try {
-          (alphaTabApiRef.current as { play: () => void }).play();
-          return;
-        } catch {
-          // fallback to Arpegia guitarSynth
-        }
-      }
-
-      // Play via Arpegia guitarSynth
+      // Play via Arpegia guitarSynth (MusyngKite sampled soundfonts) with AlphaTab cursor sync
       guitarSynth.startTabPlayback(activeTablature.measures, {
         speed: playbackSpeed,
         startTime: currentTime,
         voiceFilter,
         onTimeUpdate: (time) => {
           setCurrentTime(time);
+          if (alphaTabApiRef.current) {
+            try {
+              (alphaTabApiRef.current as { timePosition: number }).timePosition = time * 1000;
+            } catch {
+              // ignore
+            }
+          }
         },
         onNoteTrigger: (note) => {
           setActiveNotes([note]);
@@ -240,12 +233,18 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
           setIsPlaying(false);
           setCurrentTime(0);
           setActiveNotes([]);
+          if (alphaTabApiRef.current) {
+            try {
+              (alphaTabApiRef.current as { timePosition: number }).timePosition = 0;
+            } catch {
+              // ignore
+            }
+          }
         },
       });
     }
   }, [
     isPlaying,
-    displayMode,
     activeTablature.measures,
     playbackSpeed,
     currentTime,
