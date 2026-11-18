@@ -263,9 +263,11 @@ function generateAlphaTexFromMeasures(
   bpm: number,
   timeSignature: string
 ): string {
+  // AlphaTex requires space-separated time signature ("\ts 4 4" instead of "\ts 4/4")
+  const formattedTs = (timeSignature || "4/4").replace("/", " ").trim();
   const parts: string[] = [
-    `\\tempo ${bpm}`,
-    `\\ts ${timeSignature}`,
+    `\\tempo ${Math.round(bpm || 120)}`,
+    `\\ts ${formattedTs}`,
     ".",
   ];
 
@@ -300,9 +302,10 @@ function generateAlphaTexFromMeasures(
       if (group.length === 1) {
         const n = group[0];
         let suffix = "";
-        if (n.technique === "hammer-on" || n.technique === "pull-off") suffix = "h";
-        else if (n.technique === "slide") suffix = "s";
-        else if (n.technique === "bend") suffix = "b(0 2)";
+        // In AlphaTex note effects must be enclosed in braces: {h}, {sl}, {b(0 2)}
+        if (n.technique === "hammer-on" || n.technique === "pull-off") suffix = "{h}";
+        else if (n.technique === "slide") suffix = "{sl}";
+        else if (n.technique === "bend") suffix = "{b(0 2)}";
         measureTokens.push(`${n.fret}.${n.string}${suffix}`);
       } else {
         const chordNotes = group.map((n) => `${n.fret}.${n.string}`).join(" ");
@@ -387,7 +390,7 @@ function createEmptyFallback(
       measures: [dummyMeasure],
       ascii_tab: rawText,
     },
-    alphaTex: `\\tempo ${bpm}\n\\ts ${timeSignature}\n.\n3.5 1.2 0.3 0.1 |`,
+    alphaTex: `\\tempo ${Math.round(bpm || 120)}\n\\ts ${(timeSignature || "4/4").replace("/", " ").trim()}\n.\n3.5 1.2 0.3 0.1 |`,
     bpm,
     timeSignature,
     totalNotes: dummyMeasure.notes.length,

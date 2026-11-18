@@ -150,9 +150,13 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
         apiInstance = api;
         alphaTabApiRef.current = api;
 
-        // Load generated alphaTex
+        // Load generated alphaTex safely
         if (parsedResult.alphaTex) {
-          api.tex(parsedResult.alphaTex);
+          try {
+            api.tex(parsedResult.alphaTex);
+          } catch (texErr) {
+            console.warn("AlphaTex render notice:", texErr);
+          }
         }
 
         // Listen for AlphaTab playback position change
