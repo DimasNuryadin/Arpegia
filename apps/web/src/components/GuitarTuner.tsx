@@ -109,12 +109,13 @@ export function GuitarTuner({
           sampleRate
         );
 
-        if (rms < 0.008 || confidence < 0.45 || frequency < 50 || frequency > 600) {
+        // Sensitive acoustic/electric guitar threshold: RMS >= 0.003, Confidence >= 0.35
+        if (rms < 0.003 || confidence < 0.35 || frequency < 50 || frequency > 650) {
           silenceCounterRef.current++;
-          if (silenceCounterRef.current > 30) {
-            // Decay to silence after ~0.5s of no signal
+          if (silenceCounterRef.current > 50) {
+            // Smooth decay to silence after ~0.85s so guitar sustain holds steady
             setIsSilent(true);
-            smoothedCentsRef.current = smoothedCentsRef.current * 0.9;
+            smoothedCentsRef.current = smoothedCentsRef.current * 0.92;
             setSmoothedCents(smoothedCentsRef.current);
           }
         } else {

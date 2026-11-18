@@ -28,7 +28,7 @@ export function LiveMicStudio({ mockMode }: LiveMicStudioProps) {
   // Web Audio Mic Manager Instance
   const micManagerRef = useRef<LiveMicManager | null>(null);
   if (!micManagerRef.current) {
-    micManagerRef.current = new LiveMicManager(2048);
+    micManagerRef.current = new LiveMicManager(4096);
   }
   const micManager = micManagerRef.current;
 

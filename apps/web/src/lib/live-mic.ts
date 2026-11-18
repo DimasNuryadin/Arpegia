@@ -22,7 +22,7 @@ export class LiveMicManager {
   private freqDbBuffer: Float32Array<ArrayBuffer> | null = null;
   private fftSize: number;
 
-  constructor(fftSize = 2048) {
+  constructor(fftSize = 4096) {
     this.fftSize = fftSize;
   }
 
