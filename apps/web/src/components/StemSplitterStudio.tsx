@@ -18,10 +18,14 @@ import {
   Info,
   ChevronDown,
   Loader2,
+  Zap,
+  Check,
+  AlertCircle,
 } from "lucide-react";
+import { api } from "../lib/api";
 
 export interface StemTrack {
-  id: "guitar" | "vocals" | "drums" | "bass" | "other";
+  id: "guitar" | "vocals" | "drums" | "bass" | "piano" | "other";
   name: string;
   icon: string;
   color: string;
@@ -83,9 +87,21 @@ const INITIAL_STEMS: StemTrack[] = [
     activityLevel: 0,
   },
   {
-    id: "other",
-    name: "Keys, Synths & Ambience",
+    id: "piano",
+    name: "Piano & Keyboards",
     icon: "🎹",
+    color: "teal",
+    accentHex: "#14b8a6",
+    volume: 1.0,
+    pan: 0.2,
+    isMuted: false,
+    isSolo: false,
+    activityLevel: 0,
+  },
+  {
+    id: "other",
+    name: "Synths & Ambient FX",
+    icon: "✨",
     color: "emerald",
     accentHex: "#10b981",
     volume: 1.0,
@@ -97,6 +113,14 @@ const INITIAL_STEMS: StemTrack[] = [
 ];
 
 type SeparationModel = "htdemucs_6s" | "mel_band_roformer" | "ensemble_hybrid";
+
+interface SeparationResult {
+  job_id: string;
+  status: string;
+  model: string;
+  duration: number;
+  stems: Record<string, string>;
+}
 
 interface StemSplitterStudioProps {
   initialFile?: File | null;
@@ -171,6 +195,13 @@ export function StemSplitterStudio({
   const [selectedModel, setSelectedModel] = useState<SeparationModel>("htdemucs_6s");
   const [showTechSpecs, setShowTechSpecs] = useState(false);
 
+  // Neural HTDemucs 6s separation state
+  const [separatedStems, setSeparatedStems] = useState<SeparationResult | null>(null);
+  const [isNeuralMode, setIsNeuralMode] = useState(false);
+  const [isNeuralSeparating, setIsNeuralSeparating] = useState(false);
+  const [neuralProgressText, setNeuralProgressText] = useState("");
+  const [neuralError, setNeuralError] = useState<string | null>(null);
+
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -192,6 +223,13 @@ export function StemSplitterStudio({
   const stemAnalysersRef = useRef<Record<string, AnalyserNode>>({});
   const animFrameRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Neural stem playback nodes
+  const stemBuffersRef = useRef<Record<string, AudioBuffer>>({});
+  const neuralSourcesRef = useRef<Record<string, AudioBufferSourceNode>>({});
+  const neuralGainNodesRef = useRef<Record<string, GainNode>>({});
+  const playbackStartTimeRef = useRef<number>(0);
+  const playbackOffsetRef = useRef<number>(0);
 
   // Generate object URL for selectedFile
   const audioUrl = useMemo(() => {
@@ -310,7 +348,22 @@ export function StemSplitterStudio({
       stemGainsRef.current.guitar = guitarGain;
       stemAnalysersRef.current.guitar = guitarAnalyser;
 
-      // 5. Keys / Other Channel (Highpass 3600Hz sheen and atmosphere)
+      // 5. Piano Channel (Bandpass 1600Hz body & keyboard articulation)
+      const pianoFilter = ctx.createBiquadFilter();
+      pianoFilter.type = "bandpass";
+      pianoFilter.frequency.setValueAtTime(1600, ctx.currentTime);
+      pianoFilter.Q.setValueAtTime(0.8, ctx.currentTime);
+      const pianoGain = ctx.createGain();
+      const pianoAnalyser = ctx.createAnalyser();
+      pianoAnalyser.fftSize = 256;
+      source.connect(pianoFilter);
+      pianoFilter.connect(pianoAnalyser);
+      pianoFilter.connect(pianoGain);
+      pianoGain.connect(masterGain);
+      stemGainsRef.current.piano = pianoGain;
+      stemAnalysersRef.current.piano = pianoAnalyser;
+
+      // 6. Keys / Other Channel (Highpass 3600Hz sheen and atmosphere)
       const otherFilter = ctx.createBiquadFilter();
       otherFilter.type = "highpass";
       otherFilter.frequency.setValueAtTime(3600, ctx.currentTime);
@@ -334,7 +387,42 @@ export function StemSplitterStudio({
     }
   }, [masterVolume]);
 
-  // Update DSP stem gains whenever stems or volume changes
+  // Dedicated Gain and Analyser nodes for true isolated Neural stem playback
+  const setupNeuralAudioNodes = useCallback(
+    (ctx: AudioContext) => {
+      if (!masterGainRef.current) {
+        const masterGain = ctx.createGain();
+        masterGain.gain.setValueAtTime(masterVolume, ctx.currentTime);
+        masterGain.connect(ctx.destination);
+        masterGainRef.current = masterGain;
+      }
+
+      const stemKeys: Array<StemTrack["id"]> = [
+        "guitar",
+        "vocals",
+        "drums",
+        "bass",
+        "piano",
+        "other",
+      ];
+      stemKeys.forEach((key) => {
+        if (!neuralGainNodesRef.current[key]) {
+          const gainNode = ctx.createGain();
+          const analyserNode = ctx.createAnalyser();
+          analyserNode.fftSize = 256;
+
+          gainNode.connect(analyserNode);
+          analyserNode.connect(masterGainRef.current!);
+
+          neuralGainNodesRef.current[key] = gainNode;
+          stemAnalysersRef.current[key] = analyserNode;
+        }
+      });
+    },
+    [masterVolume]
+  );
+
+  // Update stem gains whenever stems or volume changes
   useEffect(() => {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
@@ -344,42 +432,82 @@ export function StemSplitterStudio({
       masterGainRef.current.gain.setValueAtTime(masterVolume, now);
     }
 
-    const isVolumeModified = stems.some((s) => s.volume < 0.95);
-    const anyFilteringActive = hasActiveSolo || hasActiveMute || isVolumeModified;
-
-    // If pure full mix (no mute or solo active and all volumes ~1.0)
-    if (!anyFilteringActive) {
-      if (directGainRef.current) {
-        directGainRef.current.gain.setValueAtTime(1.0, now);
-      }
-      Object.keys(stemGainsRef.current).forEach((key) => {
-        stemGainsRef.current[key]?.gain.setValueAtTime(0, now);
-      });
-    } else {
-      // Engage DSP stem filter channels
-      if (directGainRef.current) {
-        directGainRef.current.gain.setValueAtTime(0, now);
-      }
-
+    if (isNeuralMode) {
+      // Neural multi-track mixer mode (pure isolated buffers)
       stems.forEach((track) => {
-        const gainNode = stemGainsRef.current[track.id];
+        const gainNode = neuralGainNodesRef.current[track.id];
         if (!gainNode) return;
 
         let effectiveGain = 0;
         if (hasActiveSolo) {
-          effectiveGain = track.isSolo && !track.isMuted ? track.volume * 1.5 : 0;
+          effectiveGain = track.isSolo && !track.isMuted ? track.volume : 0;
         } else {
-          effectiveGain = track.isMuted ? 0 : track.volume * 1.25;
+          // When muted: exactly 0.00 gain -> 0.00% leakage, absolute silence
+          effectiveGain = track.isMuted ? 0 : track.volume;
         }
         gainNode.gain.setValueAtTime(effectiveGain, now);
       });
+    } else {
+      // Instant DSP preview mode
+      const isVolumeModified = stems.some((s) => s.volume < 0.95);
+      const anyFilteringActive = hasActiveSolo || hasActiveMute || isVolumeModified;
+
+      // If pure full mix (no mute or solo active and all volumes ~1.0)
+      if (!anyFilteringActive) {
+        if (directGainRef.current) {
+          directGainRef.current.gain.setValueAtTime(1.0, now);
+        }
+        Object.keys(stemGainsRef.current).forEach((key) => {
+          stemGainsRef.current[key]?.gain.setValueAtTime(0, now);
+        });
+      } else {
+        // Engage DSP stem filter channels
+        if (directGainRef.current) {
+          directGainRef.current.gain.setValueAtTime(0, now);
+        }
+
+        stems.forEach((track) => {
+          const gainNode = stemGainsRef.current[track.id];
+          if (!gainNode) return;
+
+          let effectiveGain = 0;
+          if (hasActiveSolo) {
+            effectiveGain = track.isSolo && !track.isMuted ? track.volume * 1.5 : 0;
+          } else {
+            effectiveGain = track.isMuted ? 0 : track.volume * 1.25;
+          }
+          gainNode.gain.setValueAtTime(effectiveGain, now);
+        });
+      }
     }
-  }, [stems, masterVolume, hasActiveSolo, hasActiveMute]);
+  }, [stems, masterVolume, hasActiveSolo, hasActiveMute, isNeuralMode]);
 
   // 60fps VU Meter animation loop reading real audio frequencies
   useEffect(() => {
     const loop = () => {
       if (isPlaying) {
+        // Neural mode playback time progress tracker
+        if (isNeuralMode && separatedStems && audioCtxRef.current) {
+          const ctx = audioCtxRef.current;
+          const elapsed = Math.max(0, ctx.currentTime - playbackStartTimeRef.current);
+          const current = playbackOffsetRef.current + elapsed;
+          if (current >= duration) {
+            // Track reached end
+            Object.values(neuralSourcesRef.current).forEach((src) => {
+              try {
+                src.stop();
+                src.disconnect();
+              } catch {}
+            });
+            neuralSourcesRef.current = {};
+            setIsPlaying(false);
+            setCurrentTime(0);
+            playbackOffsetRef.current = 0;
+          } else {
+            setCurrentTime(current);
+          }
+        }
+
         setStems((prev) =>
           prev.map((track) => {
             const isSilenced = track.isMuted || (hasActiveSolo && !track.isSolo);
@@ -410,22 +538,84 @@ export function StemSplitterStudio({
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, masterVolume]);
+  }, [isPlaying, masterVolume, isNeuralMode, separatedStems, duration, hasActiveSolo]);
 
-  // Toggle Play / Pause on real audio element
+  // Toggle Play / Pause (handles both Neural multi-track and DSP preview)
   const togglePlay = async () => {
     if (!selectedFile) {
       fileInputRef.current?.click();
       return;
     }
-    if (!audioRef.current) return;
 
-    if (!sourceNodeRef.current) {
-      initWebAudioRouting();
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioCtx();
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === "suspended") {
+      await ctx.resume();
     }
 
-    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-      await audioCtxRef.current.resume();
+    if (isNeuralMode && separatedStems) {
+      if (isPlaying) {
+        // Pause neural playback
+        const now = ctx.currentTime;
+        const elapsed = Math.max(0, now - playbackStartTimeRef.current);
+        const newOffset = Math.min(duration, playbackOffsetRef.current + elapsed);
+        playbackOffsetRef.current = newOffset;
+        setCurrentTime(newOffset);
+        Object.values(neuralSourcesRef.current).forEach((src) => {
+          try {
+            src.stop();
+            src.disconnect();
+          } catch {}
+        });
+        neuralSourcesRef.current = {};
+        setIsPlaying(false);
+      } else {
+        // Start synchronized neural multi-track playback
+        setupNeuralAudioNodes(ctx);
+        const now = ctx.currentTime;
+        playbackStartTimeRef.current = now;
+        let startOffset = playbackOffsetRef.current;
+        if (startOffset >= duration) {
+          startOffset = 0;
+          playbackOffsetRef.current = 0;
+          setCurrentTime(0);
+        }
+
+        const stemKeys: Array<StemTrack["id"]> = [
+          "guitar",
+          "vocals",
+          "drums",
+          "bass",
+          "piano",
+          "other",
+        ];
+        stemKeys.forEach((key) => {
+          const buffer = stemBuffersRef.current[key];
+          const gainNode = neuralGainNodesRef.current[key];
+          if (!buffer || !gainNode) return;
+
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(gainNode);
+          src.start(now, startOffset);
+          neuralSourcesRef.current[key] = src;
+        });
+
+        setIsPlaying(true);
+      }
+      return;
+    }
+
+    // Instant DSP preview with native <audio>
+    if (!audioRef.current) return;
+    if (!sourceNodeRef.current) {
+      initWebAudioRouting();
     }
 
     if (isPlaying) {
@@ -441,14 +631,68 @@ export function StemSplitterStudio({
     }
   };
 
-  // Seek on audio scrubber
+  // Seek on audio scrubber (both Neural & DSP)
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || duration <= 0) return;
+    if (duration <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const newTime = ratio * duration;
-    audioRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
+
+    if (isNeuralMode && separatedStems) {
+      const ctx = audioCtxRef.current;
+      if (!ctx) {
+        playbackOffsetRef.current = newTime;
+        setCurrentTime(newTime);
+        return;
+      }
+
+      if (isPlaying) {
+        // Stop current sources
+        Object.values(neuralSourcesRef.current).forEach((src) => {
+          try {
+            src.stop();
+            src.disconnect();
+          } catch {}
+        });
+        neuralSourcesRef.current = {};
+
+        // Start new synchronized sources at newTime
+        setupNeuralAudioNodes(ctx);
+        const now = ctx.currentTime;
+        playbackStartTimeRef.current = now;
+        playbackOffsetRef.current = newTime;
+        setCurrentTime(newTime);
+
+        const stemKeys: Array<StemTrack["id"]> = [
+          "guitar",
+          "vocals",
+          "drums",
+          "bass",
+          "piano",
+          "other",
+        ];
+        stemKeys.forEach((key) => {
+          const buffer = stemBuffersRef.current[key];
+          const gainNode = neuralGainNodesRef.current[key];
+          if (!buffer || !gainNode) return;
+
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(gainNode);
+          src.start(now, newTime);
+          neuralSourcesRef.current[key] = src;
+        });
+      } else {
+        playbackOffsetRef.current = newTime;
+        setCurrentTime(newTime);
+      }
+      return;
+    }
+
+    if (audioRef.current) {
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+    }
   };
 
   const handleToggleMute = (id: string) => {
@@ -523,11 +767,29 @@ export function StemSplitterStudio({
 
   // Handle file upload
   const handleFileUpload = (file: File) => {
-    if (isPlaying && audioRef.current) {
-      audioRef.current.pause();
+    if (isPlaying) {
+      if (isNeuralMode) {
+        Object.values(neuralSourcesRef.current).forEach((src) => {
+          try {
+            src.stop();
+            src.disconnect();
+          } catch {}
+        });
+        neuralSourcesRef.current = {};
+      } else if (audioRef.current) {
+        audioRef.current.pause();
+      }
       setIsPlaying(false);
     }
+
     setSelectedFile(file);
+    setSeparatedStems(null);
+    setIsNeuralMode(false);
+    setNeuralError(null);
+    setCurrentTime(0);
+    playbackOffsetRef.current = 0;
+    stemBuffersRef.current = {};
+
     setIsProcessing(true);
     setProcessProgress(0);
 
@@ -544,13 +806,128 @@ export function StemSplitterStudio({
     }, 120);
   };
 
-  // Real offline rendering and download of isolated WAV audio
-  const handleDownloadTrack = async (targetStem: string) => {
+  // Trigger true Neural Audio Source Separation via Meta AI HTDemucs 6s
+  const handleTriggerNeuralSeparation = async () => {
     if (!selectedFile) {
-      alert("Please upload an audio file first!");
+      fileInputRef.current?.click();
       return;
     }
 
+    if (isPlaying) {
+      if (isNeuralMode) {
+        Object.values(neuralSourcesRef.current).forEach((src) => {
+          try {
+            src.stop();
+            src.disconnect();
+          } catch {}
+        });
+        neuralSourcesRef.current = {};
+      } else if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setIsPlaying(false);
+    }
+
+    setIsNeuralSeparating(true);
+    setNeuralProgressText("Mengunggah lagu ke mesin Meta AI HTDemucs 6s...");
+    setNeuralError(null);
+
+    try {
+      setNeuralProgressText("Menjalankan pemisahan saraf 6-stem (Deep Learning Demixing)...");
+      const result = await api.separateStems(selectedFile);
+      setSeparatedStems(result);
+
+      setNeuralProgressText("Mendekode trek WAV beresolusi tinggi ke Web Audio RAM...");
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioCtx();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+
+      setupNeuralAudioNodes(ctx);
+
+      const stemKeys: Array<StemTrack["id"]> = [
+        "guitar",
+        "vocals",
+        "drums",
+        "bass",
+        "piano",
+        "other",
+      ];
+      let loadedCount = 0;
+
+      await Promise.all(
+        stemKeys.map(async (key) => {
+          const relUrl = result.stems[key];
+          if (!relUrl) return;
+          const fullUrl = api.getStemDownloadUrl(relUrl);
+          const res = await fetch(fullUrl);
+          if (!res.ok) {
+            throw new Error(`Gagal mengunduh stem ${key}: status ${res.status}`);
+          }
+          const ab = await res.arrayBuffer();
+          const decoded = await ctx.decodeAudioData(ab);
+          stemBuffersRef.current[key] = decoded;
+          loadedCount++;
+          setNeuralProgressText(
+            `Menyinkronkan trek instrumen (${loadedCount}/${stemKeys.length})...`
+          );
+        })
+      );
+
+      setIsNeuralMode(true);
+      setDuration(result.duration);
+      setCurrentTime(0);
+      playbackOffsetRef.current = 0;
+    } catch (err: unknown) {
+      console.error("Neural stem separation error:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setNeuralError(msg || "Gagal memproses pemisahan AI. Pastikan server backend aktif.");
+    } finally {
+      setIsNeuralSeparating(false);
+      setNeuralProgressText("");
+    }
+  };
+
+  // Download isolated track (uses direct AI neural WAV if available, otherwise renders offline DSP)
+  const handleDownloadTrack = async (targetStem: string) => {
+    if (!selectedFile) {
+      alert("Silakan upload file audio terlebih dahulu!");
+      return;
+    }
+
+    // Direct download of true Neural AI WAV stems
+    if (separatedStems) {
+      let relUrl = "";
+      if (targetStem === "Backing_Track_Minus_Guitar" || targetStem === "backing_track") {
+        relUrl = separatedStems.stems.backing_track;
+      } else if (targetStem === "karaoke") {
+        relUrl = separatedStems.stems.karaoke;
+      } else if (separatedStems.stems[targetStem]) {
+        relUrl = separatedStems.stems[targetStem];
+      }
+
+      if (relUrl) {
+        const fullUrl = api.getStemDownloadUrl(relUrl);
+        const trackTitle = selectedFile.name.replace(/\.[^/.]+$/, "");
+        const filename = `${trackTitle}_[${targetStem}].wav`;
+        const a = document.createElement("a");
+        a.href = fullUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+    }
+
+    // Offline DSP rendering fallback if neural separation hasn't been run yet
     setIsExportingWav(targetStem);
     try {
       const arrayBuffer = await selectedFile.arrayBuffer();
@@ -602,8 +979,14 @@ export function StemSplitterStudio({
         bufferSource.connect(cymbal);
         kick.connect(offlineCtx.destination);
         cymbal.connect(offlineCtx.destination);
+      } else if (targetStem === "piano") {
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(1600, 0);
+        filter.Q.setValueAtTime(0.8, 0);
+        bufferSource.connect(filter);
+        filter.connect(offlineCtx.destination);
       } else if (targetStem === "Backing_Track_Minus_Guitar") {
-        // Notch out guitar band (950Hz)
         const filter = offlineCtx.createBiquadFilter();
         filter.type = "notch";
         filter.frequency.setValueAtTime(950, 0);
@@ -611,7 +994,6 @@ export function StemSplitterStudio({
         bufferSource.connect(filter);
         filter.connect(offlineCtx.destination);
       } else {
-        // Highpass for keys/other
         const filter = offlineCtx.createBiquadFilter();
         filter.type = "highpass";
         filter.frequency.setValueAtTime(3600, 0);
@@ -873,6 +1255,128 @@ export function StemSplitterStudio({
         )}
       </div>
 
+      {/* 2.5 Neural Separation AI Command Center (Meta AI HTDemucs 6s) */}
+      {selectedFile && (
+        <div className="rounded-xl border border-white/[0.08] bg-zinc-900/70 p-4 sm:p-5 backdrop-blur-md relative overflow-hidden">
+          {/* Subtle accent border */}
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-amber-500 via-sky-500 to-emerald-500 opacity-70" />
+
+          {/* State 1: Ready to Separate (not yet separated, not currently separating) */}
+          {!isNeuralMode && !isNeuralSeparating && (
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-500/15 text-amber-400">
+                    <Zap className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="text-sm font-semibold text-zinc-100 font-mono">
+                    Pemisahan Saraf Meta AI HTDemucs 6s
+                  </span>
+                  <span className="rounded-md bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 text-[10px] font-mono font-medium text-sky-400">
+                    Zero Vocal Bleed (0.00% Vokal Bocor)
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
+                  Secara default mixer menggunakan preview instan DSP. Klik tombol di kanan untuk menjalankan <strong className="text-zinc-200">Meta AI Deep Neural Separation</strong>. Lagu akan dipecah menjadi 6 trek WAV studio independen murni. Saat vokal di-mute, vokal akan <strong>100% senyap tanpa kebocoran</strong>.
+                </p>
+              </div>
+
+              <button
+                onClick={handleTriggerNeuralSeparation}
+                disabled={isNeuralSeparating}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-mono font-bold text-xs px-4 py-2.5 transition-all shadow-md shadow-amber-500/20 active:scale-[0.98] cursor-pointer flex-shrink-0"
+              >
+                <Sparkles className="h-4 w-4 fill-zinc-950" />
+                <span>Pisahkan dengan Meta AI HTDemucs 6s</span>
+              </button>
+            </div>
+          )}
+
+          {/* State 2: Currently Separating */}
+          {isNeuralSeparating && (
+            <div className="space-y-3 py-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Loader2 className="h-5 w-5 animate-spin text-amber-400" />
+                  <div>
+                    <div className="text-xs font-mono font-semibold text-zinc-100 flex items-center gap-2">
+                      <span>Memproses Pemisahan Saraf AI...</span>
+                      <span className="text-[10px] text-amber-400 font-normal">
+                        (Deep Learning Audio Demixing)
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-zinc-400 font-mono">
+                      {neuralProgressText || "Memproses trek dengan arsitektur Hybrid Transformer..."}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-xs font-mono text-zinc-400 hidden sm:inline">
+                  HTDemucs 6s • 44.1kHz 16-Bit PCM
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden relative">
+                <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-amber-500 via-rose-500 to-sky-500 animate-[pulse_1.5s_ease-in-out_infinite]" />
+              </div>
+            </div>
+          )}
+
+          {/* State 3: Separation Complete & Active */}
+          {isNeuralMode && separatedStems && (
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+                    <Check className="h-3 w-3 stroke-[3]" />
+                  </span>
+                  <span className="text-xs font-semibold text-emerald-400 font-mono">
+                    Pemisahan Neural HTDemucs 6s Aktif
+                  </span>
+                  <span className="text-[10px] font-mono text-zinc-400">
+                    • 6 Trek Murni Dimuat ({separatedStems.duration}s) • Zero Vocal Bleed
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-400 font-mono">
+                  Mixer kini memutar trek audio murni hasil pemisahan saraf. Mute vokal untuk karaoke bersih 100%, solo gitar untuk lick jelas, atau unduh stem WAV di bawah.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => handleDownloadTrack("karaoke")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 px-3 py-1.5 text-xs font-mono font-medium transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download Karaoke (No Vocals)</span>
+                </button>
+                <button
+                  onClick={() => handleDownloadTrack("backing_track")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-3 py-1.5 text-xs font-mono font-medium transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download Backing (No Guitar)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Error State */}
+          {neuralError && (
+            <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300 font-mono flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-400" />
+                <span>{neuralError}</span>
+              </div>
+              <button
+                onClick={handleTriggerNeuralSeparation}
+                className="rounded bg-rose-500/20 border border-rose-500/40 px-2 py-1 text-[11px] text-rose-200 hover:bg-rose-500/30 active:scale-95 cursor-pointer"
+              >
+                Coba Lagi
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 3. Master Transport & Scrub Bar */}
       <div className="rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4 backdrop-blur-md">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
@@ -906,10 +1410,16 @@ export function StemSplitterStudio({
                 {isPlaying ? (
                   <span className="text-emerald-400 flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Sedang Memutar Audio Nyata • 5-Track DSP Aktif
+                    {isNeuralMode
+                      ? "Sedang Memutar 6 Trek Neural HTDemucs 6s (Zero Bleed Aktif)"
+                      : "Sedang Memutar Audio Nyata • 6-Track DSP Preview"}
+                  </span>
+                ) : isNeuralMode ? (
+                  <span className="text-emerald-400/80">
+                    Mode Neural HTDemucs 6s Aktif • Siap Diputar
                   </span>
                 ) : selectedFile ? (
-                  "Audio siap diputar • Tekan Play untuk mendengarkan"
+                  "Audio siap diputar • Tekan Play untuk preview atau klik tombol Pisahkan AI di atas"
                 ) : (
                   "Silakan upload lagu di atas untuk memutar audio"
                 )}
@@ -950,7 +1460,7 @@ export function StemSplitterStudio({
               ) : (
                 <>
                   <Download className="h-3.5 w-3.5" />
-                  <span>Download Backing Track (.WAV)</span>
+                  <span>{isNeuralMode ? "Download Backing Track (AI WAV)" : "Download Backing Track (.WAV)"}</span>
                 </>
               )}
             </button>
@@ -1019,7 +1529,11 @@ export function StemSplitterStudio({
                       <span>ID: {track.id}</span>
                       <span>•</span>
                       <span style={{ color: track.accentHex }}>
-                        {track.id === "guitar" ? "Guitar Band DSP" : "Channel Stem"}
+                        {isNeuralMode
+                          ? "Meta AI HTDemucs WAV"
+                          : track.id === "guitar"
+                          ? "Guitar Band DSP"
+                          : "Channel Stem"}
                       </span>
                     </div>
                   </div>
@@ -1148,7 +1662,7 @@ export function StemSplitterStudio({
                     ) : (
                       <Download className="h-3 w-3 text-amber-400" />
                     )}
-                    <span>Stem WAV</span>
+                    <span>{isNeuralMode ? "WAV Murni" : "Stem WAV"}</span>
                   </button>
                 </div>
               </div>

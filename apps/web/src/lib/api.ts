@@ -1033,6 +1033,44 @@ export class ArpegiaApiClient {
     }
     return matchChromaToChord(frame.chroma || []);
   }
+
+  /**
+   * AI Stem Separation using Meta AI HTDemucs 6s (POST /api/v1/stems/separate)
+   * Produces 6 true isolated neural stems: vocals, guitar, drums, bass, piano, other,
+   * plus pre-rendered karaoke (no vocals) and backing track (no guitar).
+   */
+  async separateStems(file: File): Promise<{
+    job_id: string;
+    status: string;
+    model: string;
+    duration: number;
+    stems: Record<string, string>;
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${this.httpBaseUrl}/api/v1/stems/separate`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(
+        err.detail || `Stem separation failed with status ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+    return data;
+  }
+
+  getStemDownloadUrl(relativeUrl: string): string {
+    if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
+      return relativeUrl;
+    }
+    return `${this.httpBaseUrl}${relativeUrl}`;
+  }
 }
 
 export const api = new ArpegiaApiClient();

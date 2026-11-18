@@ -23,11 +23,13 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
     ]
 
-    # Audio Upload Constraints (Phase 1 MVP: Max 25MB, MP3/WAV)
-    MAX_UPLOAD_SIZE_BYTES: int = 25 * 1024 * 1024  # 25 Megabytes
-    ALLOWED_AUDIO_EXTENSIONS: Set[str] = {".mp3", ".wav"}
+    # Audio Upload Constraints (Max 50MB, MP3/WAV/FLAC/M4A)
+    MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 Megabytes
+    ALLOWED_AUDIO_EXTENSIONS: Set[str] = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
     ALLOWED_AUDIO_MIME_TYPES: Set[str] = {
         "audio/mpeg",
         "audio/mp3",
@@ -35,6 +37,11 @@ class Settings(BaseSettings):
         "audio/x-wav",
         "audio/wave",
         "audio/vnd.wave",
+        "audio/flac",
+        "audio/x-m4a",
+        "audio/m4a",
+        "audio/mp4",
+        "audio/ogg",
         "application/octet-stream",  # Fallback for some clients, guarded by extension check
     }
 
