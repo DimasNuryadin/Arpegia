@@ -126,3 +126,66 @@ select,
 .tactile-press:active {
   transform: scale(0.98);
 }
+
+/* ==========================================================================
+   Songsterr-Grade AlphaTab Dark Mode & Moving Playback Cursor
+   ========================================================================== */
+.at-surface,
+.alphaTab,
+[data-alphatab] {
+  background: transparent !important;
+  color: #f4f4f5 !important;
+}
+
+/* Ensure SVG text, fret numbers, and glyphs render crisp white/zinc in dark mode */
+.at-surface svg text,
+.alphaTab svg text {
+  fill: #f4f4f5 !important;
+  font-family: inherit;
+}
+
+/* Bar cursor (Songsterr-style soft measure highlight) */
+.at-cursor-bar {
+  background: rgba(245, 158, 11, 0.12) !important;
+  border-left: 2px solid rgba(245, 158, 11, 0.5) !important;
+  border-right: 2px solid rgba(245, 158, 11, 0.5) !important;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+  transition: all 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Beat cursor (Songsterr-style glowing moving playhead line) */
+.at-cursor-beat {
+  background: #f59e0b !important;
+  width: 3px !important;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.9), 0 0 20px rgba(245, 158, 11, 0.5) !important;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 25;
+  transform: translateZ(0);
+}
+
+/* Songsterr top circular playhead handle */
+.at-cursor-beat::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  background: #fbbf24;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.9);
+}
+
+/* Selection and element highlighting */
+.at-selection {
+  background: rgba(56, 189, 248, 0.22) !important;
+  border-radius: 3px;
+}
+.at-highlight {
+  fill: #f59e0b !important;
+  stroke: #f59e0b !important;
+}

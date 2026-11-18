@@ -140,16 +140,46 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
           display: {
             layoutMode: 0, // Page layout
             staveProfile: 3, // Score & Tab
+            resources: {
+              mainGlyphColor: "#f4f4f5", // Bright zinc/white notes & text for True Dark mode!
+              secondaryGlyphColor: "rgba(244, 244, 245, 0.65)",
+              scoreInfoColor: "#fafafa",
+              staffLineColor: "#52525b", // Zinc-600 visible guitar staff lines
+              barSeparatorColor: "#71717a", // Zinc-500 bar boundary lines
+              barNumberColor: "#f59e0b", // Amber bar numbers
+            },
           },
           player: {
             enablePlayer: true,
-            outputMode: 1, // WebAudioScriptProcessor: prevents AudioWorklet global scope failure in Next.js Turbopack
+            outputMode: 1, // WebAudioScriptProcessor: avoids AudioWorklet global scope issue in Next.js Turbopack
             soundFont: "/alphatab/soundfont/sonivox.sf2",
+            enableCursor: true,
+            enableAnimatedBeatCursor: true,
+            enableElementHighlighting: true,
           },
         });
 
         apiInstance = api;
         alphaTabApiRef.current = api;
+
+        // Ensure max volume when player or soundfont is ready
+        api.playerReady.on(() => {
+          if (!isSubscribed) return;
+          try {
+            api.masterVolume = 1.0;
+          } catch {
+            // ignore
+          }
+        });
+
+        api.soundFontLoaded.on(() => {
+          if (!isSubscribed) return;
+          try {
+            api.masterVolume = 1.0;
+          } catch {
+            // ignore
+          }
+        });
 
         // Load generated alphaTex safely
         if (parsedResult.alphaTex) {
@@ -168,8 +198,41 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
 
         api.playerStateChanged.on((args: { state: number }) => {
           if (!isSubscribed) return;
-          // state 1 = playing, 0 = paused/stopped
+          // state 1 = playing, 0 = stopped, 2 = paused
           setIsPlaying(args.state === 1);
+        });
+
+        // Highlight active notes on fretboard as beats play in AlphaTab
+        api.playedBeatChanged.on((beat: unknown) => {
+          if (!isSubscribed || !beat) return;
+          try {
+            const b = beat as { notes?: Array<{ string: number; fret: number; midiVal?: number; id?: number }>; absolutePlaybackStart?: number; playbackDuration?: number };
+            const beatNotes: TabNote[] = [];
+            if (b.notes && b.notes.length > 0) {
+              for (const n of b.notes) {
+                beatNotes.push({
+                  id: `at_note_${n.id || Math.random()}`,
+                  string: n.string,
+                  fret: n.fret,
+                  midi: n.midiVal ?? 0,
+                  note_name: "",
+                  confidence: 1.0,
+                  technique: "normal",
+                  start_time: (b.absolutePlaybackStart || 0) / 1000,
+                  duration: (b.playbackDuration || 500) / 1000,
+                  voice: n.string > 4 ? "bass" : "melody",
+                });
+              }
+            }
+            if (beatNotes.length > 0) {
+              setActiveNotes(beatNotes);
+              setTimeout(() => {
+                setActiveNotes([]);
+              }, 320);
+            }
+          } catch {
+            // ignore
+          }
         });
       } catch (err) {
         console.warn("AlphaTab dynamic import notice:", err);
@@ -190,14 +253,23 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
     };
   }, [displayMode, parsedResult.alphaTex]);
 
-  // Handle Play/Stop toggle with high-fidelity Arpegia guitar soundfonts & AlphaTab cursor sync
+  // Handle Play/Stop toggle with AlphaTab player & high-fidelity Arpegia guitar soundfonts fallback
   const handleTogglePlayback = useCallback(() => {
+    const api = alphaTabApiRef.current as {
+      play?: () => void;
+      pause?: () => void;
+      stop?: () => void;
+      timePosition?: number;
+      isReadyForPlayback?: boolean;
+      masterVolume?: number;
+    } | null;
+
     if (isPlaying) {
       // Stop
       guitarSynth.stopTabPlayback();
-      if (alphaTabApiRef.current) {
+      if (api) {
         try {
-          (alphaTabApiRef.current as { timePosition: number }).timePosition = 0;
+          api.stop?.();
         } catch {
           // ignore
         }
@@ -208,43 +280,67 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
       // Play
       setIsPlaying(true);
 
-      // Play via Arpegia guitarSynth (MusyngKite sampled soundfonts) with AlphaTab cursor sync
-      guitarSynth.startTabPlayback(activeTablature.measures, {
-        speed: playbackSpeed,
-        startTime: currentTime,
-        voiceFilter,
-        onTimeUpdate: (time) => {
-          setCurrentTime(time);
-          if (alphaTabApiRef.current) {
-            try {
-              (alphaTabApiRef.current as { timePosition: number }).timePosition = time * 1000;
-            } catch {
-              // ignore
-            }
+      if (displayMode === "alphatab" && api) {
+        try {
+          if (api.masterVolume !== undefined) {
+            api.masterVolume = 1.0;
           }
-        },
-        onNoteTrigger: (note) => {
-          setActiveNotes([note]);
-          setTimeout(() => {
+          api.play?.();
+        } catch (err) {
+          console.warn("AlphaTab play notice, falling back to guitarSynth:", err);
+          guitarSynth.startTabPlayback(activeTablature.measures, {
+            speed: playbackSpeed,
+            startTime: currentTime,
+            voiceFilter,
+            onTimeUpdate: (time) => {
+              setCurrentTime(time);
+              if (api && api.timePosition !== undefined) {
+                try {
+                  api.timePosition = time * 1000;
+                } catch {
+                  // ignore
+                }
+              }
+            },
+            onNoteTrigger: (note) => {
+              setActiveNotes([note]);
+              setTimeout(() => {
+                setActiveNotes([]);
+              }, 350);
+            },
+            onComplete: () => {
+              setIsPlaying(false);
+              setCurrentTime(0);
+              setActiveNotes([]);
+            },
+          });
+        }
+      } else {
+        // Mode B: Interactive staff uses guitarSynth
+        guitarSynth.startTabPlayback(activeTablature.measures, {
+          speed: playbackSpeed,
+          startTime: currentTime,
+          voiceFilter,
+          onTimeUpdate: (time) => {
+            setCurrentTime(time);
+          },
+          onNoteTrigger: (note) => {
+            setActiveNotes([note]);
+            setTimeout(() => {
+              setActiveNotes([]);
+            }, 350);
+          },
+          onComplete: () => {
+            setIsPlaying(false);
+            setCurrentTime(0);
             setActiveNotes([]);
-          }, 350);
-        },
-        onComplete: () => {
-          setIsPlaying(false);
-          setCurrentTime(0);
-          setActiveNotes([]);
-          if (alphaTabApiRef.current) {
-            try {
-              (alphaTabApiRef.current as { timePosition: number }).timePosition = 0;
-            } catch {
-              // ignore
-            }
-          }
-        },
-      });
+          },
+        });
+      }
     }
   }, [
     isPlaying,
+    displayMode,
     activeTablature.measures,
     playbackSpeed,
     currentTime,
@@ -564,8 +660,8 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
         </div>
       </div>
 
-      {/* Main Notation Rendering Container */}
-      <div className="mt-5 rounded-xl border border-white/[0.08] bg-zinc-950/60 p-4 min-h-[300px]">
+      {/* Main Notation Rendering Container (Songsterr-Grade Dark Score Canvas) */}
+      <div className="mt-5 rounded-xl border border-white/[0.1] bg-[#0c0e12] p-4 sm:p-6 min-h-[320px] shadow-inner">
         {displayMode === "alphatab" ? (
           <div className="relative">
             <div
@@ -574,64 +670,90 @@ export function TabReaderStudio({ onSendToArrangement }: TabReaderStudioProps) {
             />
           </div>
         ) : (
-          /* Mode B: Arpegia Interactive 6-String Staff View */
+          /* Mode B: Arpegia Interactive 6-String Staff View with Moving Playhead */
           <div className="space-y-4">
             <div className="overflow-x-auto no-scrollbar pb-2">
               <div className="flex gap-4 min-w-[700px]">
-                {activeTablature.measures.map((measure) => (
-                  <div
-                    key={measure.measure_number}
-                    className="flex-1 rounded-lg border border-white/[0.06] bg-zinc-900/40 p-3"
-                  >
-                    <div className="flex items-center justify-between text-xs font-mono text-zinc-400 border-b border-white/[0.06] pb-1.5 mb-2">
-                      <span className="font-semibold text-zinc-300">
-                        Bar #{measure.measure_number}
-                      </span>
-                      <span>{parsedResult.timeSignature}</span>
-                    </div>
+                {activeTablature.measures.map((measure) => {
+                  const isCurrentMeasure =
+                    isPlaying &&
+                    currentTime >= measure.start_time &&
+                    currentTime < measure.end_time;
+                  const measureDur = Math.max(0.1, measure.end_time - measure.start_time);
+                  const measureProgress = Math.max(
+                    0,
+                    Math.min(1, (currentTime - measure.start_time) / measureDur)
+                  );
 
-                    {/* 6-String Staff Visualizer */}
-                    <div className="relative py-2 space-y-3 font-mono text-xs">
-                      {[1, 2, 3, 4, 5, 6].map((strNum) => {
-                        const noteOnString = measure.notes.find(
-                          (n) => n.string === strNum
-                        );
-                        return (
-                          <div
-                            key={strNum}
-                            className="relative flex items-center h-4 border-b border-zinc-700/60 group"
-                          >
-                            <span className="text-[10px] text-zinc-500 w-4">
-                              {["e", "B", "G", "D", "A", "E"][strNum - 1]}
-                            </span>
-                            {noteOnString && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  guitarSynth.playTabNote(
-                                    noteOnString,
-                                    activeTablature.tuning,
-                                    activeTablature.capo
-                                  )
-                                }
-                                className={`ml-6 flex items-center justify-center h-5 w-5 rounded-full text-[11px] font-bold shadow-md cursor-pointer transition-transform active:scale-95 ${
-                                  noteOnString.voice === "bass"
-                                    ? "bg-amber-400 text-zinc-950"
-                                    : noteOnString.voice === "melody"
-                                    ? "bg-sky-400 text-zinc-950"
-                                    : "bg-emerald-400 text-zinc-950"
-                                }`}
-                                title={`Click to play: String ${strNum}, Fret ${noteOnString.fret} (${noteOnString.voice})`}
-                              >
-                                {noteOnString.fret}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
+                  return (
+                    <div
+                      key={measure.measure_number}
+                      className={`relative flex-1 rounded-lg border p-3 transition-all ${
+                        isCurrentMeasure
+                          ? "border-amber-500/70 bg-zinc-900/90 shadow-md shadow-amber-500/10 ring-1 ring-amber-500/40"
+                          : "border-white/[0.06] bg-zinc-900/40"
+                      }`}
+                    >
+                      {/* Songsterr-style vertical moving playhead line */}
+                      {isCurrentMeasure && (
+                        <div
+                          className="absolute top-0 bottom-0 w-[2.5px] bg-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.9)] z-20 pointer-events-none transition-all duration-75"
+                          style={{ left: `calc(20px + ${measureProgress * 75}%)` }}
+                        >
+                          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-amber-300 shadow-[0_0_6px_rgba(245,158,11,1)]" />
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-xs font-mono text-zinc-400 border-b border-white/[0.06] pb-1.5 mb-2">
+                        <span className={`font-semibold ${isCurrentMeasure ? "text-amber-300" : "text-zinc-300"}`}>
+                          Bar #{measure.measure_number}
+                        </span>
+                        <span>{parsedResult.timeSignature}</span>
+                      </div>
+
+                      {/* 6-String Staff Visualizer */}
+                      <div className="relative py-2 space-y-3 font-mono text-xs">
+                        {[1, 2, 3, 4, 5, 6].map((strNum) => {
+                          const noteOnString = measure.notes.find(
+                            (n) => n.string === strNum
+                          );
+                          return (
+                            <div
+                              key={strNum}
+                              className="relative flex items-center h-4 border-b border-zinc-700/60 group"
+                            >
+                              <span className="text-[10px] text-zinc-500 w-4">
+                                {["e", "B", "G", "D", "A", "E"][strNum - 1]}
+                              </span>
+                              {noteOnString && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    guitarSynth.playTabNote(
+                                      noteOnString,
+                                      activeTablature.tuning,
+                                      activeTablature.capo
+                                    )
+                                  }
+                                  className={`ml-6 flex items-center justify-center h-5 w-5 rounded-full text-[11px] font-bold shadow-md cursor-pointer transition-transform active:scale-95 ${
+                                    noteOnString.voice === "bass"
+                                      ? "bg-amber-400 text-zinc-950"
+                                      : noteOnString.voice === "melody"
+                                      ? "bg-sky-400 text-zinc-950"
+                                      : "bg-emerald-400 text-zinc-950"
+                                  }`}
+                                  title={`Click to play: String ${strNum}, Fret ${noteOnString.fret} (${noteOnString.voice})`}
+                                >
+                                  {noteOnString.fret}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

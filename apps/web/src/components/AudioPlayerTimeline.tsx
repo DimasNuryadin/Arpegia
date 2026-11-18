@@ -50,9 +50,16 @@ export function AudioPlayerTimeline({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [volume, setVolume] = useState(0.85);
+  const [volume, setVolume] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [synthAuditionEnabled, setSynthAuditionEnabled] = useState(true);
+
+  // Sync volume to audio element
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume;
+    }
+  }, [volume, isMuted]);
 
   // Timeline UI state
   const [followPlayhead, setFollowPlayhead] = useState(true);

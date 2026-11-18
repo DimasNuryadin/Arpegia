@@ -175,7 +175,7 @@ export function StemSplitterStudio({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(128);
-  const [masterVolume, setMasterVolume] = useState(0.9);
+  const [masterVolume, setMasterVolume] = useState(1.0);
 
   // Multi-track stems
   const [stems, setStems] = useState<StemTrack[]>(INITIAL_STEMS);

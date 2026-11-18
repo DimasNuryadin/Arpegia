@@ -209,9 +209,18 @@ class GuitarAudioEngine {
           .webkitAudioContext;
       this.ctx = new AudioCtx();
 
-      // Master output stage
+      // Master output stage with Studio Dynamics Limiter/Compressor
+      const compressor = this.ctx.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-18, this.ctx.currentTime);
+      compressor.knee.setValueAtTime(12, this.ctx.currentTime);
+      compressor.ratio.setValueAtTime(4.0, this.ctx.currentTime);
+      compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
+      compressor.release.setValueAtTime(0.15, this.ctx.currentTime);
+
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.9, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(1.4, this.ctx.currentTime);
+
+      compressor.connect(this.masterGain);
       this.masterGain.connect(this.ctx.destination);
 
       // Create warm wooden acoustic convolution reverb impulse
@@ -378,8 +387,8 @@ class GuitarAudioEngine {
     pluckFilter.Q.setValueAtTime(1.8, startTime);
 
     const pluckGain = ctx.createGain();
-    pluckGain.gain.setValueAtTime(gainScale * 0.3, startTime);
-    pluckGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.012);
+    pluckGain.gain.setValueAtTime(gainScale * 0.65, startTime);
+    pluckGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.016);
 
     pluckNode.connect(pluckFilter);
     pluckFilter.connect(pluckGain);
@@ -455,18 +464,18 @@ class GuitarAudioEngine {
     voiceGain.gain.setValueAtTime(0.0001, startTime);
     voiceGain.gain.linearRampToValueAtTime(gainScale, startTime + attackTime);
     voiceGain.gain.exponentialRampToValueAtTime(
-      gainScale * 0.38,
-      startTime + Math.min(0.2, safeDuration * 0.35)
+      gainScale * 0.65,
+      startTime + Math.min(0.25, safeDuration * 0.4)
     );
     voiceGain.gain.exponentialRampToValueAtTime(
       0.0001,
       startTime + safeDuration
     );
 
-    harmonicGain.gain.setValueAtTime(0.25, startTime);
+    harmonicGain.gain.setValueAtTime(0.45, startTime);
     harmonicGain.gain.exponentialRampToValueAtTime(
-      0.03,
-      startTime + Math.min(0.16, safeDuration * 0.45)
+      0.08,
+      startTime + Math.min(0.2, safeDuration * 0.45)
     );
 
     // Routing
@@ -533,7 +542,7 @@ class GuitarAudioEngine {
       freq = NOTE_FREQS[noteTarget];
     }
 
-    const gainScale = (velocity / 127) * 0.28;
+    const gainScale = Math.min(1.0, (velocity / 127) * 0.92);
     this.triggerPhysicalPluckedVoice(
       ctx,
       freq,
