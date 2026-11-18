@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #090b10;
-  --foreground: #f1f5f9;
+  --background: #090b0e;
+  --foreground: #f4f4f5;
+  --bg-canvas: #090b0e;
+  --bg-surface: #11141a;
+  --bg-surface-elevated: #181c24;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-highlight: rgba(255, 255, 255, 0.16);
 }
 
 html.light {
   --background: #f8fafc;
-  --foreground: #0f172a;
+  --foreground: #09090b;
 }
 
 body {
@@ -18,69 +23,72 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Light mode studio overrides so slate cards & headers look clean and high-contrast */
+/* Light mode studio overrides so cards & headers look clean and high-contrast */
 .theme-light {
-  background-color: #f1f5f9 !important;
-  color: #0f172a !important;
+  background-color: #f8fafc !important;
+  color: #09090b !important;
 }
 
 .theme-light header,
 .theme-light footer {
-  background-color: rgba(255, 255, 255, 0.92) !important;
-  border-color: #cbd5e1 !important;
-  color: #0f172a !important;
-}
-
-.theme-light .bg-slate-900\/80,
-.theme-light .bg-slate-900\/70,
-.theme-light .bg-slate-900\/50,
-.theme-light .bg-slate-900\/40 {
   background-color: rgba(255, 255, 255, 0.95) !important;
-  border-color: #cbd5e1 !important;
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.06) !important;
+  border-color: #e4e4e7 !important;
+  color: #09090b !important;
 }
 
-.theme-light .bg-slate-950\/60,
-.theme-light .bg-slate-950\/70,
-.theme-light .bg-slate-950\/80,
-.theme-light .bg-slate-950\/90 {
-  background-color: #f8fafc !important;
-  border-color: #cbd5e1 !important;
+.theme-light .bg-zinc-900\/60,
+.theme-light .bg-zinc-900\/80,
+.theme-light .bg-zinc-900\/90,
+.theme-light .bg-slate-900\/80,
+.theme-light .bg-slate-900\/70 {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  border-color: #e4e4e7 !important;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+.theme-light .bg-zinc-950,
+.theme-light .bg-zinc-950\/60,
+.theme-light .bg-zinc-950\/80,
+.theme-light .bg-slate-950\/60 {
+  background-color: #f4f4f5 !important;
+  border-color: #e4e4e7 !important;
 }
 
 .theme-light .text-white,
-.theme-light .text-slate-100,
-.theme-light .text-slate-200 {
-  color: #0f172a !important;
+.theme-light .text-zinc-100,
+.theme-light .text-slate-100 {
+  color: #09090b !important;
 }
 
-.theme-light .text-slate-300,
+.theme-light .text-zinc-200,
+.theme-light .text-zinc-300,
+.theme-light .text-slate-200,
+.theme-light .text-slate-300 {
+  color: #27272a !important;
+}
+
+.theme-light .text-zinc-400,
 .theme-light .text-slate-400 {
-  color: #334155 !important;
+  color: #52525b !important;
 }
 
-.theme-light .text-amber-300,
-.theme-light .text-amber-400 {
-  color: #b45309 !important;
-}
-
-/* Custom studio scrollbars */
+/* Custom studio scrollbars (Clean & Minimal) */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0c0f17;
+  background: #090b0e;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
+  background: #27272a;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #3f3f46;
 }
 
 /* Hide scrollbar utility for mobile touch carousels */
@@ -111,19 +119,10 @@ select,
   padding-top: env(safe-area-inset-top, 0rem);
 }
 
-/* Studio glowing utilities */
-.glow-primary {
-  box-shadow: 0 0 25px -5px rgba(59, 130, 246, 0.25);
+/* Tactile micro-compression spring physics */
+.tactile-press {
+  transition: transform 0.1s cubic-bezier(0.16, 1, 0.3, 1);
 }
-
-.glow-accent {
-  box-shadow: 0 0 25px -5px rgba(168, 85, 247, 0.25);
-}
-
-.glow-amber {
-  box-shadow: 0 0 25px -5px rgba(245, 158, 11, 0.25);
-}
-
-.glow-emerald {
-  box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.25);
+.tactile-press:active {
+  transform: scale(0.98);
 }

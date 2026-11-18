@@ -281,7 +281,7 @@ export function AudioPlayerTimeline({
   }, [totalDuration, pixelsPerSecond]);
 
   return (
-    <div className="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-md shadow-2xl space-y-5">
+    <div className="w-full bg-zinc-900/60 border border-white/[0.08] rounded-xl p-4 sm:p-5 backdrop-blur-md shadow-sm space-y-4">
       {/* Hidden audio element for real audio file playback */}
       {audioUrl && (
         <audio
@@ -297,7 +297,7 @@ export function AudioPlayerTimeline({
       )}
 
       {/* Player Top Controls Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 pb-4 border-b border-slate-800/80">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-white/[0.08]">
         {/* Play / Skip Buttons + Active Chord Display */}
         <div className="flex items-center justify-between sm:justify-start gap-2.5 w-full sm:w-auto">
           {/* Transport buttons */}
@@ -306,7 +306,7 @@ export function AudioPlayerTimeline({
               onClick={() => jumpTime(-5)}
               title="Rewind 5s"
               aria-label="Rewind 5s"
-              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+              className="p-2 sm:p-2.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-white/[0.06] transition-all active:scale-95 cursor-pointer"
             >
               <Rewind className="w-4 h-4" />
             </button>
@@ -315,16 +315,16 @@ export function AudioPlayerTimeline({
               onClick={togglePlay}
               title={isPlaying ? "Pause (Space)" : "Play (Space)"}
               aria-label={isPlaying ? "Pause" : "Play"}
-              className={`flex items-center justify-center w-11 h-11 sm:w-12 sm:h-12 rounded-2xl shadow-lg transition-all duration-200 ${
+              className={`flex items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${
                 isPlaying
-                  ? "bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/30 scale-105"
-                  : "bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white shadow-amber-500/20"
+                  ? "bg-amber-400 text-zinc-950 font-bold"
+                  : "bg-zinc-100 hover:bg-white text-zinc-950 font-bold"
               }`}
             >
               {isPlaying ? (
-                <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
+                <Pause className="w-5 h-5 fill-current" />
               ) : (
-                <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current ml-0.5" />
+                <Play className="w-5 h-5 fill-current ml-0.5" />
               )}
             </button>
 
@@ -332,7 +332,7 @@ export function AudioPlayerTimeline({
               onClick={() => jumpTime(5)}
               title="Fast forward 5s"
               aria-label="Fast forward 5s"
-              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+              className="p-2 sm:p-2.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-white/[0.06] transition-all active:scale-95 cursor-pointer"
             >
               <FastForward className="w-4 h-4" />
             </button>
@@ -341,27 +341,27 @@ export function AudioPlayerTimeline({
               onClick={() => seekTo(0)}
               title="Restart to beginning"
               aria-label="Restart track"
-              className="p-2 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors ml-0.5"
+              className="p-2 rounded-lg bg-zinc-800/60 hover:bg-zinc-700 text-zinc-400 hover:text-white border border-white/[0.06] transition-all active:scale-95 ml-0.5 cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
 
           {/* Current Active Chord Live Display */}
-          <div className="flex items-center gap-2 sm:gap-3 bg-slate-950/80 border border-slate-800/90 rounded-xl px-2.5 py-1.5 sm:px-4 sm:py-2 shadow-inner">
-            <div className="flex items-center gap-1 text-[11px] sm:text-xs text-slate-400 font-mono">
+          <div className="flex items-center gap-2 sm:gap-2.5 bg-zinc-950/80 border border-white/[0.08] rounded-lg px-2.5 py-1.5 sm:px-3 sm:py-1.5">
+            <div className="flex items-center gap-1 text-[11px] text-zinc-400 font-mono">
               <Flame
                 className={`w-3.5 h-3.5 ${
-                  isPlaying ? "text-amber-400 animate-pulse" : "text-slate-500"
+                  isPlaying ? "text-amber-400 animate-pulse" : "text-zinc-500"
                 }`}
               />
               <span className="hidden xs:inline">Active:</span>
             </div>
-            <span className="text-base sm:text-xl font-bold font-mono text-amber-400 tracking-wider">
+            <span className="text-base sm:text-lg font-bold font-mono text-amber-400 tracking-wider">
               {activeChord?.chord || "--"}
             </span>
             {activeChord && (
-              <span className="text-[10px] sm:text-[11px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 {(activeChord.confidence * 100).toFixed(0)}%
               </span>
             )}
