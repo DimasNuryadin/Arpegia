@@ -198,47 +198,173 @@ Full request/response schemas and error envelopes are documented in [docs/api-co
 
 ---
 
-## Quickstart & Development Guide
+## 🚀 Panduan Menjalankan Aplikasi (Setup & Run Guide)
 
-### 1. 1-Command Docker Quickstart (Recommended)
+Panduan lengkap untuk menjalankan **Arpegia** di komputer lokal (Windows, macOS, atau Linux).
 
-```bash
-cp .env.example .env
-docker compose up --build
-```
+---
 
-- **Web Studio UI:** [http://localhost:3000](http://localhost:3000) (`NEXT_PUBLIC_USE_MOCK=false` by default for live backend operation; includes an interactive UI toggle for Mock Mode fallback)
-- **FastAPI Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **API Healthcheck:** [http://localhost:8000/health](http://localhost:8000/health)
+### 📋 Prasyarat Sistem (Prerequisites)
+Sebelum menjalankan aplikasi, pastikan komputer Anda telah terinstal:
+- **Node.js**: versi `18.0.0` atau yang lebih baru (direkomendasikan v20 LTS) → [Unduh Node.js](https://nodejs.org/)
+- **Python**: versi `3.10` atau `3.11` (direkomendasikan 64-bit) → [Unduh Python](https://www.python.org/)
+- **Git**: untuk mengkloning repositori → [Unduh Git](https://git-scm.com/)
 
-### 2. Local Development Startup
+---
 
-#### Terminal 1 — Backend API + Audio Engine (`Port 8000`)
+### ⚡ Cara Menjalankan (2 Terminal)
 
-**macOS / Linux:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r apps/api/requirements.txt -r services/audio-engine/requirements.txt
-PYTHONPATH="apps/api:services/audio-engine" uvicorn app.main:app --app-dir apps/api --reload --port 8000
-```
+Aplikasi Arpegia terdiri dari dua bagian utama:
+1. **Backend API (FastAPI + Meta AI HTDemucs 6s)** pada port `8000`.
+2. **Frontend Web (Next.js 16 App Router)** pada port `3001` (atau `3000`).
+
+---
+
+#### 🔹 Terminal 1: Menjalankan Backend API (Port 8000)
+
+Buka terminal pertama (PowerShell pada Windows, atau Terminal pada macOS/Linux) dan jalankan:
 
 **Windows (PowerShell):**
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r apps/api/requirements.txt -r services/audio-engine/requirements.txt
-$env:PYTHONPATH="apps/api;services/audio-engine"
-uvicorn app.main:app --app-dir apps/api --reload --port 8000
+# 1. Pindah ke folder apps/api
+cd apps/api
+
+# 2. Buat virtual environment Python (jika belum ada)
+python -m venv venv
+
+# 3. Aktifkan virtual environment
+.\venv\Scripts\Activate.ps1
+# Catatan: Jika muncul error "running scripts is disabled", jalankan:
+# Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# 4. Install dependensi backend & AI stem separation
+pip install -r requirements.txt
+
+# 5. Jalankan server backend FastAPI
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-#### Terminal 2 — Next.js Web Studio (`Port 3000`)
+**macOS / Linux (Bash / Zsh):**
+```bash
+# 1. Pindah ke folder apps/api
+cd apps/api
+
+# 2. Buat virtual environment Python (jika belum ada)
+python3 -m venv venv
+
+# 3. Aktifkan virtual environment
+source venv/bin/activate
+
+# 4. Install dependensi backend & AI stem separation
+pip install -r requirements.txt
+
+# 5. Jalankan server backend FastAPI
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+> **Verifikasi Backend:**
+> - Swagger UI (Dokumentasi API interaktif): [http://localhost:8000/docs](http://localhost:8000/docs)
+> - Health Check: [http://localhost:8000/health](http://localhost:8000/health) *(akan mengembalikan `{"status":"healthy"}`)*
+
+---
+
+#### 🔹 Terminal 2: Menjalankan Frontend Web (Port 3001 / 3000)
+
+Buka terminal kedua dan jalankan:
+
+**Windows / macOS / Linux:**
+```bash
+# 1. Pindah ke folder apps/web
+cd apps/web
+
+# 2. Install dependensi frontend (React 19, Next.js 16, AlphaTab, Tailwind)
+npm install
+
+# 3. Jalankan development server
+npm run dev -- -p 3001
+```
+
+> **Akses Aplikasi:**
+> - Buka browser Anda dan akses: **[http://localhost:3001](http://localhost:3001)**
+> *(Jika menjalankan tanpa flag `-p 3001`, aplikasi akan berjalan pada port default [http://localhost:3000](http://localhost:3000))*.
+
+---
+
+### 🛠️ Perintah Cepat dari Root Folder (Opsional)
+
+Jika Anda ingin menjalankan langsung dari root folder repository tanpa perlu `cd` bolak-balik:
+
+**Menjalankan Backend (Root Terminal 1 - PowerShell):**
+```powershell
+$env:PYTHONPATH="apps/api"
+.\apps\api\venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --app-dir apps/api --reload
+```
+
+**Menjalankan Frontend (Root Terminal 2 - PowerShell / Bash):**
+```bash
+npm --prefix apps/web run dev -- -p 3001
+```
+
+---
+
+### 🐳 Opsi Menjalankan via Docker Compose
+
+Jika komputer Anda memiliki Docker Desktop terpasang:
 
 ```bash
-cd apps/web
-npm install
-npm run dev
+# 1. Siapkan file konfigurasi environment
+cp .env.example .env
+
+# 2. Build dan jalankan seluruh container
+docker compose up --build
 ```
+- Web UI: [http://localhost:3000](http://localhost:3000)
+- Backend Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+---
+
+### 🛑 Cara Mematikan Aplikasi (Shutdown Guide)
+
+1. **Cara Normal**: Tekan `Ctrl + C` pada masing-masing jendela terminal (Terminal 1 Backend & Terminal 2 Frontend).
+2. **Jika Port Masih Tersangkut di Background (Windows PowerShell)**:
+   ```powershell
+   # Matikan proses pada port 8000 dan 3001 secara paksa
+   Get-Process -Id (Get-NetTCPConnection -LocalPort 8000, 3001 -ErrorAction SilentlyContinue).OwningProcess -ErrorAction SilentlyContinue | Stop-Process -Force
+   ```
+3. **Jika Port Masih Tersangkut di Background (macOS / Linux)**:
+   ```bash
+   lsof -ti :8000,3001 | xargs kill -9
+   ```
+
+---
+
+### 💡 Panduan Singkat Mencoba Fitur Utama
+
+1. **AI Stem Splitter (Pemisah Trek Vokal & Musik)**:
+   - Masuk ke tab **Stem Splitter**.
+   - Upload file lagu (format `.mp3`, `.wav`, atau `.flac`).
+   - Klik tombol **"Pisahkan dengan Meta AI HTDemucs 6s"**.
+   - Model deep learning akan memisahkan lagu menjadi 6 trek murni (**Vokal, Gitar, Drum, Bass, Piano, Lainnya**).
+   - Klik tombol **Mute (M)** pada vokal untuk berkaraoke ria dengan **0.00% vokal bocor (zero bleed)**, atau klik tombol **Solo (S)** pada gitar untuk menyimak petikan lick gitar.
+2. **Interactive Tab Reader Studio (Songsterr-Grade Reader)**:
+   - Masuk ke tab **Tab Reader**.
+   - Pilih preset lagu bawaan (misal: *Metallica - Master of Puppets*, *Hotel California*, dll) atau unggah partitur tabulasi Anda.
+   - Tekan tombol **Play** untuk melihat kursor birama bercahaya (*playhead cursor*) meluncur secara sinkron dengan synth instrumen berdaya tinggi.
+3. **Live Microphone Tuner & Jamming Studio**:
+   - Masuk ke mode **Live Mic Studio** melalui tombol di pojok kanan atas.
+   - Buka **Guitar Tuner** untuk menyetem senar gitar Anda secara akurat (60fps pitch tracking).
+   - Buka **Real-Time Chord Jamming** untuk mendeteksi akor gitar secara instan saat Anda bermain di depan mikrofon.
+
+---
+
+### ❓ Troubleshooting & Solusi Masalah Umum
+
+| Gejala / Error | Penyebab | Solusi |
+| :--- | :--- | :--- |
+| `running scripts is disabled on this system` (PowerShell) | Kebijakan eksekusi script Windows dibatasi | Jalankan: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` lalu ulangi aktivasi venv. |
+| `Address already in use` (Port 8000 / 3001) | Port sedang dipakai proses lain atau instance lama | Matikan proses di port tersebut menggunakan perintah di bagian *Cara Mematikan Aplikasi* di atas. |
+| `Failed to fetch` saat upload file audio | Server backend belum berjalan atau port salah | Pastikan Uvicorn di Terminal 1 sudah berstatus `Uvicorn running on http://0.0.0.0:8000`. |
+| `EPERM: operation not permitted` saat build Next.js di Windows | Kunci file sementara Windows pada folder `.next` | Hapus folder `.next` (`rmdir /s /q apps\web\.next`) lalu jalankan `npm run dev` kembali. |
 
 ---
 
